@@ -463,6 +463,19 @@ async def task_processor():
                 if os.path.exists(settings.TEST_AUTOMATION_PATH):
                     with open(settings.TEST_AUTOMATION_PATH) as f:
                         task.automation = Automation.model_validate(json.load(f))
+                    # Task.validate_unique_parameters demands the task's parameter
+                    # keys exactly equal the automation's, and the worker re-validates.
+                    params = task.automation.parameters
+                    task.input_parameters = {
+                        k: list(v) for k, v in params.input_parameters.items()
+                    }
+                    task.secure_parameters = {
+                        k: list(v) for k, v in params.secure_parameters.items()
+                    }
+                    task.unique_parameter_names = [
+                        n for n in task.unique_parameter_names
+                        if n in task.input_parameters or n in task.secure_parameters
+                    ]
                     logger.warning(
                         f"LOCAL OVERRIDE: automation replaced from "
                         f"{settings.TEST_AUTOMATION_PATH}"
