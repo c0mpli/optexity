@@ -458,12 +458,7 @@ async def task_processor():
                         )
                     continue
 
-            # --- LOCAL AUTOMATION OVERRIDE (dev iteration) ---
-            # Set TEST_AUTOMATION_PATH (env or ENV_PATH .env file) to run a local
-            # automation JSON instead of the one stored in the control plane.
-            # Placed here rather than in /inference because task_processor
-            # re-fetches and overwrites task.automation just above, at the
-            # `Automation.model_validate(data["automation"])` call.
+            # Must stay below the re-fetch above, which overwrites task.automation.
             if settings.TEST_AUTOMATION_PATH:
                 if os.path.exists(settings.TEST_AUTOMATION_PATH):
                     with open(settings.TEST_AUTOMATION_PATH) as f:
@@ -473,13 +468,10 @@ async def task_processor():
                         f"{settings.TEST_AUTOMATION_PATH}"
                     )
                 else:
-                    # Loud, because the enclosing except swallows exceptions and
-                    # would otherwise drop the task with no explanation.
                     logger.error(
                         f"TEST_AUTOMATION_PATH is set but not found: "
                         f"{settings.TEST_AUTOMATION_PATH}"
                     )
-            # --- END OVERRIDE ---
             task_running = True
             last_task_start_time = datetime.now(timezone.utc)
             current_task_timeout_minutes = task.max_timeout_in_minutes

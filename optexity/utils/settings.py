@@ -35,9 +35,7 @@ class Settings(LLMSettings):
         validation_alias=AliasChoices("OPTEXITY_API_KEY", "API_KEY")
     )
 
-    # Dev-only escape hatch: automations live in the control plane, so without DB
-    # access there is no way to iterate on one. When set, this JSON file is loaded
-    # over task.automation just before dispatch. Unset (the default) = no override.
+    # Dev only: run this local automation JSON instead of the stored one.
     TEST_AUTOMATION_PATH: str | None = None
 
     CHILD_PORT_OFFSET: int = 9000
