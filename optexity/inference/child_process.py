@@ -458,6 +458,16 @@ async def task_processor():
                         )
                     continue
 
+            # --- LOCAL AUTOMATION OVERRIDE (dev iteration) ---
+            # Automations live in the control plane; without DB access we can't
+            # edit them. Placed here (not in /inference) because task_processor
+            # re-fetches and overwrites task.automation just above, at the
+            # `Automation.model_validate(data["automation"])` call.
+            if os.path.exists("test_automation.json"):
+                with open("test_automation.json", "r") as f:
+                    task.automation = Automation.model_validate(json.load(f))
+                logger.warning("LOCAL OVERRIDE: automation replaced from test_automation.json")
+            # --- END OVERRIDE ---
             task_running = True
             last_task_start_time = datetime.now(timezone.utc)
             current_task_timeout_minutes = task.max_timeout_in_minutes
