@@ -1,7 +1,7 @@
 import asyncio
 
 from optexity.memory_layer.capture import total_llm_tokens
-from optexity.memory_layer.effects import (
+from optexity.memory_layer.verify.effects import (
     NAVIGATING_ACTIONS,
     NAVIGATION_GRACE_SECONDS,
     NAVIGATION_TIMEOUT_SECONDS,
@@ -11,17 +11,18 @@ from optexity.memory_layer.effects import (
     wait_for_download,
     wait_for_navigation,
 )
-from optexity.memory_layer.measure import choose_command, probe_row
-from optexity.memory_layer.trace import Classification, Trace
-from optexity.memory_layer.verdicts import (
+from optexity.memory_layer.verify.measure import choose_command, probe_row
+from optexity.memory_layer.verify.verdicts import locator_action
+from optexity.schema.memory_layer import (
+    Classification,
     NodeVerdict,
+    Trace,
     VerdictStatus,
     VerificationReport,
-    locator_action,
 )
 
 
-async def verify_walk(
+async def verify_automation(
     trace: Trace, automation, task, memory, browser
 ) -> VerificationReport:
     """Walk the compiled nodes, measuring each locator against the live page.
