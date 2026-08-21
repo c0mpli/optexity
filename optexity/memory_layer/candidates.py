@@ -3,11 +3,15 @@ import re
 from types import SimpleNamespace
 
 from optexity.inference.core.interaction.utils import LocatorExtraction
-from optexity.memory_layer.trace import Candidate, Element
+from optexity.memory_layer.trace import (
+    Candidate,
+    Element,
+    by_stability,
+    unique_candidates,
+)
 
-# _looks_dynamic discards letters-plus-two-digits names like RoboForm's
-# 04fullname. It sits on the live LLM-fallback path, so rather than change it
-# those values are re-admitted here, one rung lower.
+# _looks_dynamic discards names like RoboForm's 04fullname and sits on the live
+# LLM-fallback path, so rather than change it those are re-admitted a rung lower.
 REJECTED_ATTRIBUTE_SCORES = {
     "data-testid": 100,
     "data-test-id": 98,
@@ -24,14 +28,12 @@ CSS_ATTRIBUTE_GROUP = re.compile(r"\[([^\[\]]*)\]")
 WELL_FORMED_CSS_ATTRIBUTE = re.compile(r"^[\w:-]+([~^|*$]?=)'(?:[^'\\]|\\.)*'$")
 MINIMUM_STABILITY_SCORE = 40
 
-# Identifying attributes upstream never looks at, scored into its ladder.
 UNSCORED_ATTRIBUTE_LOCATORS = {
     "title": (74, "get_by_title"),
     "alt": (73, "get_by_alt_text"),
 }
 HREF_SCORE = 60
 
-# A radio group shares one name, so only the value tells its options apart.
 GROUPED_INPUT_TYPES = {"radio", "checkbox"}
 VALUE_NARROWED_SCORE = 88
 
@@ -39,7 +41,7 @@ XPATH_ANCHOR_TAGS = ("dialog", "form", "table", "nav", "main", "article", "secti
 ANCHORED_XPATH_SCORE = 15
 
 # browser-use records an accessible name but no role, so utils.py:225-238's
-# implicit-ARIA mapping is recomputed here.
+# mapping is recomputed here.
 ROLE_BY_TAG = {"button": "button", "select": "combobox", "textarea": "textbox"}
 ROLE_BY_INPUT_TYPE = {
     "checkbox": "checkbox",
@@ -56,7 +58,6 @@ ROLE_BY_INPUT_TYPE = {
     "number": "spinbutton",
 }
 
-# Tried when a selector matches more than one element.
 NARROWINGS = (":not([type='hidden'])", ":visible")
 NARROWING_PENALTY = 5
 
@@ -88,8 +89,8 @@ def _css_attribute_selector(tag_name: str, attribute: str, value: str) -> str:
 
 
 class _RecordedElementAsNode:
-    """The subset of a live DOM node _scored_candidates reads. ax_node unlocks
-    its role+name rung, the only family independent of id/name/class."""
+    """ax_node unlocks _scored_candidates' role+name rung, the only family
+    independent of id/name/class."""
 
     def __init__(self, element: Element):
         self.attributes = element.attributes
@@ -126,6 +127,11 @@ def _is_parseable(command: str) -> bool:
     return True
 
 
+def _locator_candidate(selector: str, kind: str, score: int) -> Candidate:
+    quoted = LocatorExtraction._quote_locator_value(selector, 400)
+    return Candidate(command=f"locator({quoted})", kind=kind, stability_score=score)
+
+
 def _readmitted_candidates(element: Element) -> list[Candidate]:
     readmitted = []
     tag_name = element.tag_name or "*"
@@ -138,14 +144,11 @@ def _readmitted_candidates(element: Element) -> list[Candidate]:
         # Rebuilt-for-escaping values keep their full score.
         if not rejected and not needs_escaping:
             continue
-        selector = LocatorExtraction._quote_locator_value(
-            _css_attribute_selector(tag_name, attribute, value), 400
-        )
         readmitted.append(
-            Candidate(
-                command=f"locator({selector})",
-                kind=f"{attribute} (re-admitted)" if rejected else attribute,
-                stability_score=score - (READMISSION_PENALTY if rejected else 0),
+            _locator_candidate(
+                _css_attribute_selector(tag_name, attribute, value),
+                f"{attribute} (re-admitted)" if rejected else attribute,
+                score - (READMISSION_PENALTY if rejected else 0),
             )
         )
     return readmitted
@@ -167,12 +170,9 @@ def _unscored_attribute_candidates(element: Element) -> list[Candidate]:
 
     href = (element.attributes.get("href") or "").strip()
     if element.tag_name == "a" and href and not LocatorExtraction._looks_dynamic(href):
-        selector = LocatorExtraction._quote_locator_value(
-            _css_attribute_selector("a", "href", href), 400
-        )
         candidates.append(
-            Candidate(
-                command=f"locator({selector})", kind="href", stability_score=HREF_SCORE
+            _locator_candidate(
+                _css_attribute_selector("a", "href", href), "href", HREF_SCORE
             )
         )
     return candidates
@@ -186,14 +186,11 @@ def _value_narrowed_candidates(element: Element) -> list[Candidate]:
     if not name or not value:
         return []
     selector = _css_attribute_selector(element.tag_name or "input", "name", name)
-    quoted = LocatorExtraction._quote_locator_value(
-        f"{selector}[value='{_escaped(value)}']", 400
-    )
     return [
-        Candidate(
-            command=f"locator({quoted})",
-            kind="name+value",
-            stability_score=VALUE_NARROWED_SCORE,
+        _locator_candidate(
+            f"{selector}[value='{_escaped(value)}']",
+            "name+value",
+            VALUE_NARROWED_SCORE,
         )
     ]
 
@@ -241,24 +238,17 @@ def _narrowed_candidates(candidates: list[Candidate]) -> list[Candidate]:
     return narrowed
 
 
-def bundle_verified_candidates(candidates: list[Candidate]) -> str | None:
-    """One command falling through to the next locator if the first stops
-    matching. The schema stores one command per node, so an or_() chain is the
-    only way to persist a ranked fallback. None while nothing has been probed."""
-    verified = sorted(
-        (
-            candidate
-            for candidate in candidates
-            if candidate.matches_exactly_one_element
-        ),
-        key=lambda candidate: candidate.stability_score,
-        reverse=True,
-    )
-    if not verified:
+def propose_bundle(candidates: list[Candidate]) -> Candidate | None:
+    """The schema stores one command per node, so an or_() chain is the only way
+    to persist a fallback. Returned UNPROBED and must be measured: or_() is a set
+    union, so two legs each matching one element can match two together, and the
+    family rule below makes that more likely by picking unrelated signals."""
+    verified = unique_candidates(candidates)
+    if len(verified) < 2:
         return None
 
-    # A differently-derived locator, not a variant that breaks on the same change.
-    bundled: list[Candidate] = []
+    # A differently-derived leg, not a variant that breaks on the same change.
+    legs: list[Candidate] = []
     families: set[str] = set()
     for candidate in verified:
         family = candidate.kind.split(" +")[0].split(" (")[0]
@@ -266,13 +256,16 @@ def bundle_verified_candidates(candidates: list[Candidate]) -> str | None:
         if family in families:
             continue
         families.add(family)
-        bundled.append(candidate)
-        if len(bundled) == MAX_BUNDLED_CANDIDATES:
+        legs.append(candidate)
+        if len(legs) == MAX_BUNDLED_CANDIDATES:
             break
 
-    return "".join(
-        [bundled[0].command]
-        + [f".or_(page.{candidate.command})" for candidate in bundled[1:]]
+    if len(legs) < 2:
+        return None
+    return Candidate(
+        command=legs[0].command + f".or_(page.{legs[1].command})",
+        kind=f"{legs[0].kind} or {legs[1].kind}",
+        stability_score=legs[0].stability_score,
     )
 
 
@@ -307,5 +300,5 @@ def build_candidates(element: Element) -> list[Candidate]:
         for candidate in candidates
         if "..." not in candidate.command and _is_parseable(candidate.command)
     ]
-    candidates.sort(key=lambda candidate: candidate.stability_score, reverse=True)
+    candidates.sort(key=by_stability, reverse=True)
     return candidates

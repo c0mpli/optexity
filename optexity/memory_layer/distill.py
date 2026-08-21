@@ -5,11 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from optexity.memory_layer.candidates import (
-    MINIMUM_STABILITY_SCORE,
-    build_candidates,
-    bundle_verified_candidates,
-)
+from optexity.memory_layer.candidates import MINIMUM_STABILITY_SCORE, build_candidates
 from optexity.memory_layer.trace import Trace, TraceRow, load_trace
 from optexity.schema.automation import Automation
 
@@ -20,12 +16,9 @@ DETERMINISTIC_ACTIONS = {
     "go_back",
     "select_dropdown",
     "upload_file",
-    "switch",
 }
 ELEMENT_ACTIONS = {"click", "input", "select_dropdown", "upload_file"}
 
-# Replaying without these loses nothing. Anything else lacking a deterministic
-# equivalent did real work we are not reproducing, which is a different claim.
 READ_ONLY_ACTIONS = {
     "screenshot",
     "evaluate",
@@ -36,24 +29,23 @@ READ_ONLY_ACTIONS = {
     "read_file",
 }
 
-# browser-use emits a submit as a separate send_keys, so typing then pressing
-# Enter would distil to typing and never submitting. key_press cannot express it
-# either: handle_keypress implements Enter/Tab/Space, KEY_NAMES has none.
+# browser-use emits a submit as a separate send_keys, so typing then Enter would
+# distil to typing only. key_press cannot express it: handle_keypress takes
+# Enter/Tab/Space, KEY_NAMES has none.
 ENTER_KEYS = {"Enter", "Return", "\n"}
 
 # save_history redacts secure parameters to <secret>KEY</secret>
 # (browser-use agent/views.py:330); recording that would bake in a placeholder.
 SECRET_PLACEHOLDER = re.compile(r"^<secret>([^<>]+)</secret>$")
 
-# Runtime defaults are tuned for LLM-resolved nodes: 10 tries at 1.0s floors
-# every miss at 10s, and end_sleep_time's 5.0 dominates a distilled run.
+# Runtime defaults are tuned for LLM-resolved nodes: 10 tries floors every miss
+# at 10s, and end_sleep_time's 5.0 dominates a distilled run.
 MAX_TRIES = 2
-MAX_TIMEOUT_SECONDS_PER_TRY = 1.0
 SLEEP_AFTER_NAVIGATION = 3.0
 SLEEP_AFTER_INTERACTION = 0.5
 
 # The parameter name is the automation's public API, so prefer what a human
-# wrote. Capped because a prose label makes a poor identifier.
+# wrote; capped because a prose label makes a poor identifier.
 PARAMETER_NAME_ATTRIBUTES = ("aria-label", "placeholder", "name", "id")
 MAX_PARAMETER_NAME_CHARS = 40
 CLASSIFICATION_MARKS = {
@@ -175,19 +167,28 @@ def _fold_enter_into_preceding_input(trace: Trace) -> None:
 
 
 def _mark_superseded_interactions(trace: Trace) -> None:
-    """Drop an interaction the agent immediately repeated on the same element.
+    """Of a run of identical consecutive actions, only the last had any effect.
 
-    fill replaces contents, so of two consecutive fills only the last had effect.
-    Identity comes from the recorded element, which is all element_hash is good
-    for offline: it cannot find an element, but it can tell two rows apart.
-    """
-    deterministic = [row for row in trace.rows if row.classification == "deterministic"]
+    fill replaces contents; navigating to one url twice is idempotent. Element
+    identity comes from element_hash, which cannot find an element on a page but
+    can tell two recorded rows apart."""
+    deterministic = trace.deterministic_rows()
     for row, following in zip(deterministic, deterministic[1:], strict=False):
-        if row.action != following.action or row.action not in {"input", "click"}:
+        if row.action != following.action:
             continue
-        if row.element is None or not row.element.is_same_element_as(following.element):
-            continue
-        if row.params.get("press_enter"):
+        if row.action == "navigate":
+            # Loading one url twice running is idempotent, so only the last of
+            # a run has effect. An agent that loses its way emits long runs.
+            if row.params.get("url") != following.params.get("url"):
+                continue
+        elif row.action in {"input", "click"}:
+            if row.element is None:
+                continue
+            if not row.element.is_same_element_as(following.element):
+                continue
+            if row.params.get("press_enter"):
+                continue
+        else:
             continue
         row.classification = "redundant"
         row.reason = f"superseded by the same {row.action} at step {following.step}"
@@ -198,11 +199,9 @@ def _action_node_for(
 ) -> dict[str, Any]:
     interaction: dict[str, Any] = {}
     best = row.best_candidate
-    # A verified or_() chain degrades to its next-best locator rather than
-    # failing; falls back to the single best while nothing is probed.
-    command = bundle_verified_candidates(row.candidates) or (
-        best.command if best else None
-    )
+    # Single locator only: an or_() bundle is unsafe until measured, which this
+    # pure compiler cannot do. verify.choose_command adds one when it can.
+    command = best.command if best else None
 
     if row.action == "input":
         recorded_text = str(row.params.get("text", ""))
@@ -219,7 +218,6 @@ def _action_node_for(
         interaction["input_text"] = {
             "command": command,
             "input_text": f"{{{parameter_name}[0]}}",
-            "fill_or_type": "fill",
             "press_enter": bool(row.params.get("press_enter")),
             "skip_prompt": True,
         }
@@ -232,17 +230,21 @@ def _action_node_for(
             "skip_prompt": True,
         }
     elif row.action == "upload_file":
-        interaction["upload_file"] = {"command": command, "skip_prompt": True}
+        # A recorded path belongs to the capturing machine, so it is a parameter.
+        parameter_name = _parameter_name_for(row, already_used)
+        parameters[parameter_name] = [str(row.params.get("path", ""))]
+        interaction["upload_file"] = {
+            "command": command,
+            "file_path": f"{{{parameter_name}[0]}}",
+            "skip_prompt": True,
+        }
     elif row.action == "navigate":
         interaction["go_to_url"] = {"url": row.params.get("url")}
     elif row.action == "go_back":
         interaction["go_back"] = {}
-    elif row.action == "switch":
-        interaction["switch_tab"] = {"tab_index": row.params.get("tab_id", 0)}
 
     if row.action in ELEMENT_ACTIONS:
         interaction["max_tries"] = MAX_TRIES
-        interaction["max_timeout_seconds_per_try"] = MAX_TIMEOUT_SECONDS_PER_TRY
 
     return {
         "type": "action_node",
@@ -270,7 +272,6 @@ def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
             "url": automation_url,
             "parameters": {
                 "input_parameters": parameters,
-                "secure_parameters": {},
                 "generated_parameters": {},
             },
             "nodes": nodes,

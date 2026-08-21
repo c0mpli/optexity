@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 Classification = Literal["deterministic", "redundant", "non_deterministic"]
+by_stability = attrgetter("stability_score")
 
 
 class Element(BaseModel):
@@ -22,8 +23,7 @@ class Element(BaseModel):
         return self.frame_id is not None
 
     def is_same_element_as(self, other: "Element | None") -> bool:
-        """Hashes are useless as locators offline, but they do identify one
-        recorded element against another."""
+        """Hashes cannot locate an element, but they do tell two rows apart."""
         if other is None or self.frame_id != other.frame_id:
             return False
         for hash_attribute in ("stable_hash", "element_hash"):
@@ -61,6 +61,19 @@ class Candidate(BaseModel):
         return self.match_count is None
 
 
+def unique_candidates(candidates: list[Candidate]) -> list[Candidate]:
+    """Probed at exactly one match, most stable first."""
+    return sorted(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.matches_exactly_one_element
+        ),
+        key=by_stability,
+        reverse=True,
+    )
+
+
 class TraceRow(BaseModel):
     step: int
     action_index: int
@@ -82,16 +95,11 @@ class TraceRow(BaseModel):
 
     @property
     def best_candidate(self) -> Candidate | None:
-        by_score = attrgetter("stability_score")
-        unique = [
-            candidate
-            for candidate in self.candidates
-            if candidate.matches_exactly_one_element
-        ]
+        unique = unique_candidates(self.candidates)
         if unique:
-            return max(unique, key=by_score)
+            return unique[0]
         unprobed = [candidate for candidate in self.candidates if candidate.is_unprobed]
-        return max(unprobed, key=by_score) if unprobed else None
+        return max(unprobed, key=by_stability) if unprobed else None
 
 
 class Trace(BaseModel):
