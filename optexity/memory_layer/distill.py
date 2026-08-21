@@ -6,18 +6,25 @@ from pathlib import Path
 from typing import Any
 
 from optexity.memory_layer.candidates import MINIMUM_STABILITY_SCORE, build_candidates
-from optexity.memory_layer.trace import Trace, TraceRow, load_trace
+from optexity.memory_layer.trace import (
+    Classification,
+    Trace,
+    TraceRow,
+    load_trace,
+    placeholder,
+)
 from optexity.schema.automation import Automation
 
-DETERMINISTIC_ACTIONS = {
-    "click",
-    "input",
-    "navigate",
-    "go_back",
-    "select_dropdown",
-    "upload_file",
+# Element actions and the InteractionAction field each compiles to. Everything
+# else about them -- command, skip_prompt, max_tries -- is identical.
+ACTION_FIELD = {
+    "click": "click_element",
+    "input": "input_text",
+    "select_dropdown": "select_option",
+    "upload_file": "upload_file",
 }
-ELEMENT_ACTIONS = {"click", "input", "select_dropdown", "upload_file"}
+ELEMENT_ACTIONS = set(ACTION_FIELD)
+DETERMINISTIC_ACTIONS = ELEMENT_ACTIONS | {"navigate", "go_back"}
 
 READ_ONLY_ACTIONS = {
     "screenshot",
@@ -44,38 +51,29 @@ MAX_TRIES = 2
 SLEEP_AFTER_NAVIGATION = 3.0
 SLEEP_AFTER_INTERACTION = 0.5
 
+# Narrow enough to do one step, small enough that a wrong task string costs
+# seconds rather than a re-exploration of the page.
+AGENTIC_FALLBACK_MAX_STEPS = 3
+
 # The parameter name is the automation's public API, so prefer what a human
 # wrote; capped because a prose label makes a poor identifier.
 PARAMETER_NAME_ATTRIBUTES = ("aria-label", "placeholder", "name", "id")
 MAX_PARAMETER_NAME_CHARS = 40
 CLASSIFICATION_MARKS = {
-    "deterministic": "keep",
-    "redundant": "drop",
-    "non_deterministic": "llm",
+    Classification.DETERMINISTIC: "keep",
+    Classification.REDUNDANT: "drop",
+    Classification.NON_DETERMINISTIC: "llm",
 }
 
 
 def _parameter_name_for(row: TraceRow, already_used: set[str]) -> str:
-    name_sources = []
-    if row.element:
-        accessible_name = (row.element.accessible_name or "").strip()
-        if 0 < len(accessible_name) <= MAX_PARAMETER_NAME_CHARS:
-            name_sources.append(accessible_name)
-        name_sources += [
-            row.element.attributes[attribute]
-            for attribute in PARAMETER_NAME_ATTRIBUTES
-            if row.element.attributes.get(attribute)
-        ]
-
+    source = row.element.label(PARAMETER_NAME_ATTRIBUTES) if row.element else ""
+    if len(source) > MAX_PARAMETER_NAME_CHARS:
+        source = ""
     # replace_variables needs a valid identifier, and form fields are often
     # ordered: 04fullname -> fullname.
-    slug = ""
-    for source in name_sources:
-        slug = re.sub(r"[^a-z0-9]+", "_", source.lower()).strip("_")
-        slug = re.sub(r"^\d+_?", "", slug)
-        if slug:
-            break
-    slug = slug or "input"
+    slug = re.sub(r"[^a-z0-9]+", "_", source.lower()).strip("_")
+    slug = re.sub(r"^\d+_?", "", slug) or "input"
 
     name, suffix = slug, 2
     while name in already_used:
@@ -84,30 +82,55 @@ def _parameter_name_for(row: TraceRow, already_used: set[str]) -> str:
     return name
 
 
+def _declare_parameter(
+    row: TraceRow,
+    value: str,
+    parameters: dict[str, list[str]],
+    already_used: set[str],
+) -> str:
+    """Record a recorded value as an input parameter, returning its placeholder."""
+    redacted = SECRET_PLACEHOLDER.match(value)
+    name = redacted.group(1) if redacted else _parameter_name_for(row, already_used)
+    already_used.add(name)
+    # Redacted at capture: declare the parameter, leave it empty.
+    parameters[name] = [""] if redacted else [value]
+    return placeholder(name)
+
+
+def _mark(row: TraceRow, classification: Classification, reason: str) -> None:
+    row.classification, row.reason = classification, reason
+
+
 def classify(trace: Trace, automation_url: str | None) -> None:
     seen_first_action = False
 
     for row in trace.rows:
         if not row.executed:
-            row.classification = "redundant"
-            row.reason = "action never executed"
+            _mark(row, Classification.REDUNDANT, "action never executed")
             continue
         if row.error:
-            row.classification = "redundant"
-            row.reason = f"action errored ({row.error[:120]})"
+            _mark(row, Classification.REDUNDANT, f"action errored ({row.error[:120]})")
             continue
         if row.action == "scroll":
-            row.classification = "redundant"
-            row.reason = "the command path already scrolls the element into view"
+            _mark(
+                row,
+                Classification.REDUNDANT,
+                "the command path already scrolls the element into view",
+            )
             continue
         if row.action not in DETERMINISTIC_ACTIONS:
-            read_only = row.action in READ_ONLY_ACTIONS
-            row.classification = "redundant" if read_only else "non_deterministic"
-            row.reason = (
-                f"'{row.action}' only observes the page"
-                if read_only
-                else f"no deterministic equivalent for '{row.action}'"
-            )
+            if row.action in READ_ONLY_ACTIONS:
+                _mark(
+                    row,
+                    Classification.REDUNDANT,
+                    f"'{row.action}' only observes the page",
+                )
+            else:
+                _mark(
+                    row,
+                    Classification.NON_DETERMINISTIC,
+                    f"no equivalent for '{row.action}'",
+                )
             continue
         if (
             row.action == "navigate"
@@ -115,24 +138,33 @@ def classify(trace: Trace, automation_url: str | None) -> None:
             and automation_url
             and (row.params.get("url") or "").rstrip("/") == automation_url.rstrip("/")
         ):
-            row.classification = "redundant"
-            row.reason = "the run already begins on the automation url"
+            _mark(
+                row,
+                Classification.REDUNDANT,
+                "the run already begins on the automation url",
+            )
             continue
 
         if row.action in ELEMENT_ACTIONS:
             if row.element is None:
-                row.classification = "non_deterministic"
-                row.reason = "no element was recorded for this action"
+                _mark(
+                    row,
+                    Classification.NON_DETERMINISTIC,
+                    "no element was recorded for this action",
+                )
                 continue
             if row.element.is_in_subframe:
-                row.classification = "non_deterministic"
-                row.reason = f"element is inside frame {row.element.frame_id}"
+                _mark(
+                    row,
+                    Classification.NON_DETERMINISTIC,
+                    f"element is inside frame {row.element.frame_id}",
+                )
                 continue
 
             row.candidates = build_candidates(row.element)
             best = row.best_candidate
             if best is None or best.stability_score < MINIMUM_STABILITY_SCORE:
-                row.classification = "non_deterministic"
+                row.classification = Classification.NON_DETERMINISTIC
                 row.reason = (
                     f"best locator scores {best.stability_score if best else 0} "
                     f"< {MINIMUM_STABILITY_SCORE}"
@@ -143,7 +175,7 @@ def classify(trace: Trace, automation_url: str | None) -> None:
                 f"locator {best.kind} score={best.stability_score} matches={matches}"
             )
 
-        row.classification = "deterministic"
+        row.classification = Classification.DETERMINISTIC
         row.reason = row.reason or f"deterministic {row.action}"
         seen_first_action = True
 
@@ -159,10 +191,13 @@ def _fold_enter_into_preceding_input(trace: Trace) -> None:
             keys = str(row.params.get("keys", ""))
             if keys in ENTER_KEYS and previous_kept.action == "input":
                 previous_kept.params["press_enter"] = True
-                row.classification = "redundant"
-                row.reason = f"folded into step {previous_kept.step} as press_enter"
+                _mark(
+                    row,
+                    Classification.REDUNDANT,
+                    f"folded into step {previous_kept.step} as press_enter",
+                )
                 continue
-        if row.classification == "deterministic":
+        if row.classification == Classification.DETERMINISTIC:
             previous_kept = row
 
 
@@ -172,7 +207,7 @@ def _mark_superseded_interactions(trace: Trace) -> None:
     fill replaces contents; navigating to one url twice is idempotent. Element
     identity comes from element_hash, which cannot find an element on a page but
     can tell two recorded rows apart."""
-    deterministic = trace.deterministic_rows()
+    deterministic = trace.rows_with(Classification.DETERMINISTIC)
     for row, following in zip(deterministic, deterministic[1:], strict=False):
         if row.action != following.action:
             continue
@@ -190,62 +225,11 @@ def _mark_superseded_interactions(trace: Trace) -> None:
                 continue
         else:
             continue
-        row.classification = "redundant"
+        row.classification = Classification.REDUNDANT
         row.reason = f"superseded by the same {row.action} at step {following.step}"
 
 
-def _action_node_for(
-    row: TraceRow, parameters: dict[str, list[str]], already_used: set[str]
-) -> dict[str, Any]:
-    interaction: dict[str, Any] = {}
-    best = row.best_candidate
-    # Single locator only: an or_() bundle is unsafe until measured, which this
-    # pure compiler cannot do. verify.choose_command adds one when it can.
-    command = best.command if best else None
-
-    if row.action == "input":
-        recorded_text = str(row.params.get("text", ""))
-        redacted = SECRET_PLACEHOLDER.match(recorded_text)
-        parameter_name = (
-            redacted.group(1) if redacted else _parameter_name_for(row, already_used)
-        )
-        if redacted:
-            # Redacted at capture: declare the parameter, leave it empty.
-            already_used.add(parameter_name)
-            parameters[parameter_name] = [""]
-        else:
-            parameters[parameter_name] = [recorded_text]
-        interaction["input_text"] = {
-            "command": command,
-            "input_text": f"{{{parameter_name}[0]}}",
-            "press_enter": bool(row.params.get("press_enter")),
-            "skip_prompt": True,
-        }
-    elif row.action == "click":
-        interaction["click_element"] = {"command": command, "skip_prompt": True}
-    elif row.action == "select_dropdown":
-        interaction["select_option"] = {
-            "command": command,
-            "select_values": [str(row.params.get("text", ""))],
-            "skip_prompt": True,
-        }
-    elif row.action == "upload_file":
-        # A recorded path belongs to the capturing machine, so it is a parameter.
-        parameter_name = _parameter_name_for(row, already_used)
-        parameters[parameter_name] = [str(row.params.get("path", ""))]
-        interaction["upload_file"] = {
-            "command": command,
-            "file_path": f"{{{parameter_name}[0]}}",
-            "skip_prompt": True,
-        }
-    elif row.action == "navigate":
-        interaction["go_to_url"] = {"url": row.params.get("url")}
-    elif row.action == "go_back":
-        interaction["go_back"] = {}
-
-    if row.action in ELEMENT_ACTIONS:
-        interaction["max_tries"] = MAX_TRIES
-
+def _node(row: TraceRow, interaction: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "action_node",
         "interaction_action": interaction,
@@ -253,6 +237,80 @@ def _action_node_for(
             SLEEP_AFTER_NAVIGATION if row.changed_url else SLEEP_AFTER_INTERACTION
         ),
     }
+
+
+def _action_node_for(
+    row: TraceRow, parameters: dict[str, list[str]], already_used: set[str]
+) -> dict[str, Any]:
+    interaction: dict[str, Any] = {}
+
+    if row.action in ACTION_FIELD:
+        best = row.best_candidate
+        # Single locator only: an or_() bundle is unsafe until measured, which
+        # this pure compiler cannot do. verify.choose_command adds one when it can.
+        action: dict[str, Any] = {
+            "command": best.command if best else None,
+            "skip_prompt": True,
+        }
+        if row.action == "input":
+            action["input_text"] = _declare_parameter(
+                row, str(row.params.get("text", "")), parameters, already_used
+            )
+            action["press_enter"] = bool(row.params.get("press_enter"))
+        elif row.action == "select_dropdown":
+            action["select_values"] = [str(row.params.get("text", ""))]
+        elif row.action == "upload_file":
+            # A recorded path belongs to the capturing machine, so it is a parameter.
+            action["file_path"] = _declare_parameter(
+                row, str(row.params.get("path", "")), parameters, already_used
+            )
+        interaction = {ACTION_FIELD[row.action]: action, "max_tries": MAX_TRIES}
+    elif row.action == "navigate":
+        interaction = {"go_to_url": {"url": row.params.get("url")}}
+    elif row.action == "go_back":
+        interaction = {"go_back": {}}
+
+    return _node(row, interaction)
+
+
+def _describe(row: TraceRow) -> str:
+    """A one-line instruction an agent can follow for a row we could not pin down."""
+    element = row.element
+    named = ""
+    if element:
+        label = element.label(PARAMETER_NAME_ATTRIBUTES)
+        named = f" labelled {label!r}" if label else ""
+        named += f" ({element.tag_name})" if element.tag_name else ""
+
+    if row.action == "input":
+        return f"Type {str(row.params.get('text', ''))!r} into the field{named}."
+    if row.action == "click":
+        return f"Click the element{named}."
+    if row.action == "select_dropdown":
+        return f"Select {str(row.params.get('text', ''))!r} in the dropdown{named}."
+    if row.action == "upload_file":
+        return f"Upload the file to the input{named}."
+    return f"Perform the recorded {row.action} step{named}."
+
+
+def _agentic_node_for(row: TraceRow) -> dict[str, Any]:
+    """A narrow agentic node for a row with no locator worth committing to.
+
+    Scoped to one step and given a small step budget: this is the escape hatch
+    for a single element, not a licence to re-explore the page. It is also the
+    unit the loop retries — each round gives the row another chance to compile
+    to something deterministic.
+    """
+    return _node(
+        row,
+        {
+            "agentic_task": {
+                "task": _describe(row),
+                "max_steps": AGENTIC_FALLBACK_MAX_STEPS,
+                "backend": "browser_use",
+            }
+        },
+    )
 
 
 def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
@@ -263,8 +321,12 @@ def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
     parameters: dict[str, list[str]] = {}
     already_used: set[str] = set()
     nodes = [
-        _action_node_for(row, parameters, already_used)
-        for row in trace.deterministic_rows()
+        (
+            _action_node_for(row, parameters, already_used)
+            if row.classification == Classification.DETERMINISTIC
+            else _agentic_node_for(row)
+        )
+        for row in trace.compiled_rows()
     ]
 
     return Automation.model_validate(

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -8,7 +9,13 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field
 
 from optexity.memory_layer.candidates import MINIMUM_STABILITY_SCORE, propose_bundle
-from optexity.memory_layer.trace import Trace, TraceRow, by_stability, unique_candidates
+from optexity.memory_layer.trace import (
+    Classification,
+    Trace,
+    TraceRow,
+    by_stability,
+    unique_candidates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,22 +50,36 @@ async def wait_for_download(browser, before: set[str]) -> str | None:
     """
     if not downloads_present(browser) - before:
         return None
+
     deadline = time.monotonic() + DOWNLOAD_SETTLE_SECONDS
     while time.monotonic() < deadline:
         arrived = downloads_present(browser) - before
-        finished = [
-            name for name in arrived if not name.endswith((".crdownload", ".tmp"))
-        ]
-        if finished:
-            return sorted(finished)[0]
+        done = sorted(n for n in arrived if not n.endswith((".crdownload", ".tmp")))
+        if done:
+            return done[0]
         await asyncio.sleep(0.1)
     return None
+
+
+class VerdictStatus(StrEnum):
+    """What the walk established about one node."""
+
+    # locator measured at exactly one match, and the node had an observable effect
+    VERIFIED = "verified"
+    # the step still needs the agent: it compiled to an agentic node
+    AGENTIC = "agentic"
+    # nothing measurable identified the element, so the row lost its command
+    DEMOTED = "demoted"
+    # the node ran but showed no evidence it acted; nothing can be concluded
+    UNMEASURED = "unmeasured"
+    # the pass stopped earlier, so this row was never exercised
+    NOT_REACHED = "not_reached"
 
 
 class NodeVerdict(BaseModel):
     step: int
     action: str
-    status: str  # verified | demoted | unmeasured | not_reached
+    status: VerdictStatus
     command: str | None = None
     reason: str = ""
     downloaded: str | None = None
@@ -76,7 +97,9 @@ class VerificationReport(BaseModel):
 
     @property
     def verified_count(self) -> int:
-        return sum(1 for verdict in self.verdicts if verdict.status == "verified")
+        return sum(
+            1 for verdict in self.verdicts if verdict.status == VerdictStatus.VERIFIED
+        )
 
     @property
     def complete(self) -> bool:
@@ -114,12 +137,8 @@ async def probe_row(row: TraceRow, browser) -> tuple[int, float]:
     started = time.monotonic()
     probes_run = 0
     verified = 0
-    seen: set[str] = set()
 
     for candidate in sorted(row.candidates, key=by_stability, reverse=True):
-        if candidate.command in seen:
-            continue
-        seen.add(candidate.command)
         if verified >= VERIFIED_CANDIDATES_WANTED:
             break
         if time.monotonic() - started > PROBE_BUDGET_SECONDS:
@@ -173,6 +192,7 @@ async def wait_for_navigation(browser, from_url: str | None, timeout: float) -> 
     wait_for_load_state returns at once on the already-loaded old page, so a
     navigation the node triggered is still in flight when it returns.
     """
+
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not same_page(await browser.get_current_page_url(), from_url):
@@ -280,7 +300,7 @@ async def verify_walk(
     from optexity.inference.core.run_automation import run_action_node
 
     report = VerificationReport(url=automation.url)
-    rows = trace.deterministic_rows()
+    rows = trace.compiled_rows()
     if len(rows) != len(automation.nodes):
         report.stopped_at = 0
         report.stopped_because = (
@@ -290,7 +310,9 @@ async def verify_walk(
         return report
 
     for position, (row, node) in enumerate(zip(rows, automation.nodes, strict=True)):
-        verdict = NodeVerdict(step=row.step, action=row.action, status="not_reached")
+        verdict = NodeVerdict(
+            step=row.step, action=row.action, status=VerdictStatus.NOT_REACHED
+        )
 
         # Mirror run_action_node's own preamble before probing, so the probe and
         # the execution address the same document: handle_new_tabs switches to
@@ -300,6 +322,8 @@ async def verify_walk(
 
         live_url = await browser.get_current_page_url()
 
+        agentic = getattr(node.interaction_action, "agentic_task", None) is not None
+
         if locator_action(node) is not None:
             verdict.probes_run, verdict.probe_seconds = await probe_row(row, browser)
             command, reason = await choose_command(row, browser)
@@ -308,8 +332,8 @@ async def verify_walk(
                 # element from a different page than the recording is normal.
                 if row.url_before and not same_page(live_url, row.url_before):
                     reason = f"{reason}; on {live_url}, recorded at {row.url_before}"
-                verdict.status = "demoted"
-                row.classification = "non_deterministic"
+                verdict.status = VerdictStatus.DEMOTED
+                row.classification = Classification.NON_DETERMINISTIC
                 verdict.reason = row.reason = reason
                 report.verdicts.append(verdict)
                 report.stopped_at = position
@@ -339,14 +363,17 @@ async def verify_walk(
 
         effective, evidence = await acted(row, node, browser, before_url)
         if not effective:
-            verdict.status = "unmeasured"
+            verdict.status = VerdictStatus.UNMEASURED
             verdict.reason = f"{verdict.reason}; no observable effect ({evidence})"
             report.verdicts.append(verdict)
             report.stopped_at = position
             report.stopped_because = "node executed without evidence it acted"
             break
 
-        verdict.status = "verified"
+        # An agentic node working proves the agent can still do the step, not
+        # that anything was made deterministic. Calling it verified would let a
+        # run of pure LLM steps read as a fully compiled automation.
+        verdict.status = VerdictStatus.AGENTIC if agentic else VerdictStatus.VERIFIED
         if verdict.downloaded:
             evidence = f"{evidence}; downloaded {verdict.downloaded}"
         verdict.reason = f"{verdict.reason}; {evidence}"
@@ -357,7 +384,7 @@ async def verify_walk(
             NodeVerdict(
                 step=row.step,
                 action=row.action,
-                status="not_reached",
+                status=VerdictStatus.NOT_REACHED,
                 reason="pass stopped before this row",
             )
         )

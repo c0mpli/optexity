@@ -1,12 +1,29 @@
 import json
+from enum import StrEnum
 from operator import attrgetter
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-Classification = Literal["deterministic", "redundant", "non_deterministic"]
+
+class Classification(StrEnum):
+    """What the distiller concluded about a recorded action."""
+
+    # compiles to a command node
+    DETERMINISTIC = "deterministic"
+    # had no effect worth reproducing
+    REDUNDANT = "redundant"
+    # real work, but nothing identifies the element well enough to commit to
+    NON_DETERMINISTIC = "non_deterministic"
+
+
 by_stability = attrgetter("stability_score")
+
+
+def placeholder(parameter_name: str) -> str:
+    """How the runtime's replace_variables spells a parameter reference."""
+    return f"{{{parameter_name}[0]}}"
 
 
 class Element(BaseModel):
@@ -18,6 +35,18 @@ class Element(BaseModel):
     stable_hash: int | None = None
     frame_id: str | None = None
 
+    def label(self, attributes: tuple[str, ...]) -> str:
+        """The most human-readable handle this element offers, else empty."""
+        accessible_name = (self.accessible_name or "").strip()
+        return accessible_name or next(
+            (
+                self.attributes[attribute]
+                for attribute in attributes
+                if self.attributes.get(attribute)
+            ),
+            "",
+        )
+
     @property
     def is_in_subframe(self) -> bool:
         return self.frame_id is not None
@@ -26,11 +55,10 @@ class Element(BaseModel):
         """Hashes cannot locate an element, but they do tell two rows apart."""
         if other is None or self.frame_id != other.frame_id:
             return False
-        for hash_attribute in ("stable_hash", "element_hash"):
-            mine = getattr(self, hash_attribute)
-            theirs = getattr(other, hash_attribute)
-            if mine is not None and theirs is not None:
-                return mine == theirs
+        if self.stable_hash is not None and other.stable_hash is not None:
+            return self.stable_hash == other.stable_hash
+        if self.element_hash is not None and other.element_hash is not None:
+            return self.element_hash == other.element_hash
         return bool(self.xpath) and self.xpath == other.xpath
 
     @classmethod
@@ -107,8 +135,20 @@ class Trace(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
     rows: list[TraceRow] = Field(default_factory=list)
 
-    def deterministic_rows(self) -> list[TraceRow]:
-        return [row for row in self.rows if row.classification == "deterministic"]
+    def rows_with(self, *classifications: Classification) -> list[TraceRow]:
+        return [row for row in self.rows if row.classification in classifications]
+
+    def compiled_rows(self) -> list[TraceRow]:
+        """Every row that becomes a node, in order.
+
+        Includes the rows we refused to make deterministic: they compile to a
+        narrow agentic node rather than vanishing, so the node list stays a
+        complete path. A hole would leave a replay silently skipping the step
+        and strand every node after it on the wrong page.
+        """
+        return self.rows_with(
+            Classification.DETERMINISTIC, Classification.NON_DETERMINISTIC
+        )
 
     def counts_by_classification(self) -> dict[str, int]:
         counts = {"total": len(self.rows)}
