@@ -1,11 +1,15 @@
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from optexity.memory_layer.distill.candidates import (
     MINIMUM_STABILITY_SCORE,
     propose_bundle,
 )
 from optexity.schema.memory_layer import TraceRow, by_stability, verified_candidates
+
+if TYPE_CHECKING:
+    from optexity.inference.infra.browser import Browser
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +18,7 @@ PROBE_BUDGET_SECONDS = 20.0
 VERIFIED_CANDIDATES_WANTED = 2
 
 
-async def probe(command: str, browser) -> int | None:
+async def probe(command: str, browser: "Browser") -> int | None:
     """None and zero differ: an unparseable command tells us nothing."""
     from optexity.inference.core.run_automation import count_locator_matches
 
@@ -28,7 +32,7 @@ async def probe(command: str, browser) -> int | None:
         return None
 
 
-async def probe_row(row: TraceRow, browser) -> None:
+async def probe_row(row: TraceRow, browser: "Browser") -> None:
     """Bounded twice: every probe costs a second of an authenticated session."""
     started = time.monotonic()
     verified = 0
@@ -43,7 +47,7 @@ async def probe_row(row: TraceRow, browser) -> None:
             verified += 1
 
 
-async def choose_command(row: TraceRow, browser) -> tuple[str | None, str]:
+async def choose_command(row: TraceRow, browser: "Browser") -> tuple[str | None, str]:
     verified = verified_candidates(row.candidates)
     if not verified:
         measured = sum(
