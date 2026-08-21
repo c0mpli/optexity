@@ -467,7 +467,9 @@ async def task_processor():
                 task.input_parameters = dict(automation_parameters.input_parameters)
                 task.secure_parameters = dict(automation_parameters.secure_parameters)
                 task.unique_parameter_names = []
-                logger.warning(f"LOCAL OVERRIDE: {settings.TEST_AUTOMATION_PATH}")
+                logger.warning(
+                    f"Using local automation override: {settings.TEST_AUTOMATION_PATH}"
+                )
 
             task_running = True
             last_task_start_time = datetime.now(timezone.utc)
