@@ -2,6 +2,7 @@ import logging
 import time
 import uuid
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 
 from optexity.memory_layer.agent_history import load_trace
@@ -16,14 +17,18 @@ from optexity.schema.memory_layer import (
     RoundResult,
     Trace,
     VerdictStatus,
+    VerificationReport,
 )
+from optexity.schema.task import Task
 
 logger = logging.getLogger(__name__)
 
 MAX_ROUNDS = 3
 
 
-def resolve_agentic_rows(trace: Trace, report, task) -> tuple[Trace, int]:
+def resolve_agentic_rows(
+    trace: Trace, report: VerificationReport, task: Task
+) -> tuple[Trace, int]:
     """Replace each agentic row with what its own run turned out to be.
 
     Returns the rebuilt trace and how many rows became deterministic. Rows whose
@@ -73,7 +78,7 @@ def resolve_agentic_rows(trace: Trace, report, task) -> tuple[Trace, int]:
 async def improve(
     trace: Trace,
     automation: Automation,
-    build_session,
+    build_session: Callable[..., Awaitable],
     max_rounds: int = MAX_ROUNDS,
 ) -> tuple[Automation, Trace, LoopResult]:
     """Replay, learn from the agentic steps, recompile. Repeat.
