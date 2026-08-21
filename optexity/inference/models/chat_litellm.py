@@ -123,17 +123,22 @@ class ChatLiteLLM(BaseChatModel):
 
     @overload
     async def ainvoke(
-        self, messages: list[BaseMessage], output_format: None = None
+        self, messages: list[BaseMessage], output_format: None = None, **kwargs: Any
     ) -> ChatInvokeCompletion[str]: ...
 
     @overload
     async def ainvoke(
-        self, messages: list[BaseMessage], output_format: type[T]
+        self, messages: list[BaseMessage], output_format: type[T], **kwargs: Any
     ) -> ChatInvokeCompletion[T]: ...
 
     async def ainvoke(
-        self, messages: list[BaseMessage], output_format: type[T] | None = None
+        self,
+        messages: list[BaseMessage],
+        output_format: type[T] | None = None,
+        **kwargs: Any,
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
+        # BaseChatModel.ainvoke takes **kwargs, and browser-use passes call
+        # metadata (session_id, ...) that litellm has no use for.
         try:
             response = await litellm.acompletion(
                 **self._request(messages, output_format)
