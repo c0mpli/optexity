@@ -157,3 +157,76 @@ class Trace(BaseModel):
             key = row.classification or "unclassified"
             counts[key] = counts.get(key, 0) + 1
         return counts
+
+
+class VerdictStatus(StrEnum):
+    """What the walk established about one node."""
+
+    # locator measured at exactly one match, and the node had an observable effect
+    VERIFIED = "verified"
+    # the step still needs the agent: it compiled to an agentic node
+    AGENTIC = "agentic"
+    # nothing measurable identified the element, so the row lost its command
+    DEMOTED = "demoted"
+    # the node ran but showed no evidence it acted; nothing can be concluded
+    UNMEASURED = "unmeasured"
+    # the pass stopped earlier, so this row was never exercised
+    NOT_REACHED = "not_reached"
+
+
+class NodeVerdict(BaseModel):
+    step: int
+    action: str
+    status: str  # verified | demoted | unmeasured | not_reached
+    command: str | None = None
+    reason: str = ""
+    downloaded: str | None = None
+
+
+class VerificationReport(BaseModel):
+    url: str | None = None
+    verdicts: list[NodeVerdict] = Field(default_factory=list)
+    stopped_at: int | None = None
+    stopped_because: str | None = None
+    final_url: str | None = None
+    signals: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def verified_count(self) -> int:
+        return sum(1 for verdict in self.verdicts if verdict.status == "verified")
+
+    @property
+    def complete(self) -> bool:
+        return self.stopped_at is None and bool(self.verdicts)
+
+
+class NodePatch(BaseModel):
+    index: int
+    prompt_instructions: str | None = None
+    agentic_task: str | None = None
+
+
+class AutomationPatch(BaseModel):
+    """Everything the model is allowed to change. Notably absent: command — with
+    nowhere in the patch to put one, the eval(f"page.{command}") surface in
+    browser.py stays closed by the shape of the request, not by validation."""
+
+    rename_parameters: dict[str, str] = Field(default_factory=dict)
+    constant_parameters: list[str] = Field(default_factory=list)
+    nodes: list[NodePatch] = Field(default_factory=list)
+
+
+class RoundResult(BaseModel):
+    number: int
+    nodes: int
+    verified: int
+    agentic: int
+    unresolved: int
+    llm_tokens: int = 0
+    seconds: float = 0.0
+
+
+class LoopResult(BaseModel):
+    rounds: list[RoundResult] = Field(default_factory=list)
+    converged: bool = False
+    stopped_because: str = ""

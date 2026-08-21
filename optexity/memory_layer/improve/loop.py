@@ -4,35 +4,23 @@ import uuid
 from collections import Counter
 from copy import deepcopy
 
-from pydantic import BaseModel, Field
-
 from optexity.memory_layer.agent_history import load_trace
 from optexity.memory_layer.capture import AGENT_HISTORY_FILENAME, total_llm_tokens
-from optexity.memory_layer.distill import classify, trace_to_automation
-from optexity.memory_layer.trace import Classification, Trace
-from optexity.memory_layer.verdicts import VerdictStatus, apply_verdicts
-from optexity.memory_layer.verify import verify_walk
+from optexity.memory_layer.distill.compiler import classify, trace_to_automation
+from optexity.memory_layer.verify.verdicts import apply_verdicts
+from optexity.memory_layer.verify.walk import verify_automation
 from optexity.schema.automation import Automation
+from optexity.schema.memory_layer import (
+    Classification,
+    LoopResult,
+    RoundResult,
+    Trace,
+    VerdictStatus,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_ROUNDS = 3
-
-
-class RoundResult(BaseModel):
-    number: int
-    nodes: int
-    verified: int
-    agentic: int
-    unresolved: int
-    llm_tokens: int = 0
-    seconds: float = 0.0
-
-
-class LoopResult(BaseModel):
-    rounds: list[RoundResult] = Field(default_factory=list)
-    converged: bool = False
-    stopped_because: str = ""
 
 
 def resolve_agentic_rows(trace: Trace, report, task) -> tuple[Trace, int]:
@@ -105,7 +93,7 @@ async def improve(
         label = f"round{number}_{uuid.uuid4()}"
         task, memory, browser, teardown = await build_session(label, automation)
         try:
-            report = await verify_walk(
+            report = await verify_automation(
                 trace, deepcopy(automation), task, memory, browser
             )
         finally:
