@@ -37,6 +37,12 @@ HREF_SCORE = 60
 GROUPED_INPUT_TYPES = {"radio", "checkbox"}
 NAME_VALUE_SCORE = 88
 
+# A control's type says what it does, so it outlives the restyle that renames the
+# class beside it -- the upstream ladder reads class and never this. Only values
+# that name a function: type='text' describes every text box on the page.
+FUNCTIONAL_TYPES = {"submit", "button", "reset", "checkbox", "radio", "file"}
+FUNCTIONAL_TYPE_SCORE = 62
+
 XPATH_ANCHOR_TAGS = ("dialog", "form", "table", "nav", "main", "article", "section")
 ANCHORED_XPATH_SCORE = 15
 
@@ -220,6 +226,19 @@ def _name_value_candidates(element: Element) -> list[Candidate]:
     ]
 
 
+def _functional_type_candidates(element: Element) -> list[Candidate]:
+    """A control identified by what it does, optionally scoped to its form."""
+    control_type = (element.attributes.get("type") or "").lower()
+    if control_type not in FUNCTIONAL_TYPES:
+        return []
+    selector = _css_attribute_selector(element.tag_name or "*", "type", control_type)
+    scoped = [f"form {selector}"] if "/form" in element.xpath else []
+    return [
+        _locator_candidate(candidate_selector, "type", FUNCTIONAL_TYPE_SCORE)
+        for candidate_selector in [*scoped, selector]
+    ]
+
+
 def _anchored_xpath_candidates(element: Element) -> list[Candidate]:
     segments = [segment for segment in element.xpath.split("/") if segment]
     for position in range(len(segments) - 2, -1, -1):
@@ -314,6 +333,7 @@ def build_candidates(element: Element) -> list[Candidate]:
         + _unscored_attribute_candidates(element)
         + _name_value_candidates(element)
         + _tag_text_candidates(element)
+        + _functional_type_candidates(element)
         + _anchored_xpath_candidates(element)
     ):
         if extra_candidate.command not in seen_commands:
