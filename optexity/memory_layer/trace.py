@@ -35,14 +35,14 @@ class Element(BaseModel):
     stable_hash: int | None = None
     frame_id: str | None = None
 
-    def label(self, attributes: tuple[str, ...]) -> str:
+    def label(self, attribute_names: tuple[str, ...]) -> str:
         """The most human-readable handle this element offers, else empty."""
         accessible_name = (self.accessible_name or "").strip()
         return accessible_name or next(
             (
-                self.attributes[attribute]
-                for attribute in attributes
-                if self.attributes.get(attribute)
+                self.attributes[name]
+                for name in attribute_names
+                if self.attributes.get(name)
             ),
             "",
         )

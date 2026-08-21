@@ -23,8 +23,7 @@ ACTION_FIELD = {
     "select_dropdown": "select_option",
     "upload_file": "upload_file",
 }
-ELEMENT_ACTIONS = set(ACTION_FIELD)
-DETERMINISTIC_ACTIONS = ELEMENT_ACTIONS | {"navigate", "go_back"}
+DETERMINISTIC_ACTIONS = {*ACTION_FIELD, "navigate", "go_back"}
 
 READ_ONLY_ACTIONS = {
     "screenshot",
@@ -78,7 +77,6 @@ def _parameter_name_for(row: TraceRow, already_used: set[str]) -> str:
     name, suffix = slug, 2
     while name in already_used:
         name, suffix = f"{slug}_{suffix}", suffix + 1
-    already_used.add(name)
     return name
 
 
@@ -145,7 +143,7 @@ def classify(trace: Trace, automation_url: str | None) -> None:
             )
             continue
 
-        if row.action in ELEMENT_ACTIONS:
+        if row.action in ACTION_FIELD:
             if row.element is None:
                 _mark(
                     row,
@@ -271,7 +269,7 @@ def _action_node_for(
     return _node(row, interaction)
 
 
-def _describe(row: TraceRow) -> str:
+def _instruction_for(row: TraceRow) -> str:
     """A one-line instruction an agent can follow for a row we could not pin down."""
     element = row.element
     named = ""
@@ -303,7 +301,7 @@ def _agentic_node_for(row: TraceRow) -> dict[str, Any]:
         row,
         {
             "agentic_task": {
-                "task": _describe(row),
+                "task": _instruction_for(row),
                 "max_steps": AGENTIC_FALLBACK_MAX_STEPS,
                 "backend": "browser_use",
             }
