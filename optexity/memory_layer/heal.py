@@ -7,10 +7,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from optexity.memory_layer.agent_history import load_trace
 from optexity.memory_layer.candidates import MINIMUM_STABILITY_SCORE
 from optexity.memory_layer.capture import RECOVERY_HISTORY_FILENAME
 from optexity.memory_layer.distill import classify, compile_nodes
-from optexity.memory_layer.trace import Classification, load_trace
+from optexity.memory_layer.trace import Classification
 from optexity.memory_layer.verify import LOCATOR_FIELDS, locator_action
 from optexity.schema.automation import ActionNode, Automation
 
