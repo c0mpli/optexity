@@ -1,34 +1,15 @@
-"""Re-run a compiled automation until nothing is left for the agent to do.
-
-A first pass rarely compiles every step. Some elements have nothing worth
-committing to on the page the agent happened to be looking at, and those rows
-compile to a narrow agentic node instead. That node still uses the model on
-every run, so it is where the remaining cost lives.
-
-The loop closes on it. Each round replays the automation, and every agentic node
-that runs writes its own ``agent_history.json`` exactly as the original run did
--- the capture hook does not care whether it was invoked from a whole-task agent
-or a one-step one. So a round produces fresh evidence about precisely the steps
-that were still undecided, and that evidence is distilled and spliced back in.
-
-A step that could not be pinned down against one page state gets another attempt
-against a different one, and the automation gets more deterministic as rounds
-go by. When a step never resolves, it stays agentic -- an honest outcome, and a
-stable one, rather than a failure to report.
-
-The loop stops early rather than optimistically: if a round verifies fewer nodes
-than the last, the changes are making things worse and the previous automation
-is the one to keep.
-"""
-
 import logging
 import time
 import uuid
+from collections import Counter
 from copy import deepcopy
 
 from pydantic import BaseModel, Field
 
-from optexity.memory_layer.capture import summarize_token_usage
+from optexity.memory_layer.capture import (
+    AGENT_HISTORY_FILENAME,
+    summarize_token_usage,
+)
 from optexity.memory_layer.distill import classify, trace_to_automation
 from optexity.memory_layer.trace import Classification, Trace, load_trace
 from optexity.memory_layer.verify import VerdictStatus, verify_walk
@@ -48,22 +29,14 @@ class RoundResult(BaseModel):
     llm_tokens: int = 0
     seconds: float = 0.0
 
-    @property
-    def deterministic_share(self) -> float:
-        return self.verified / self.nodes if self.nodes else 0.0
-
 
 class LoopResult(BaseModel):
     rounds: list[RoundResult] = Field(default_factory=list)
     converged: bool = False
     stopped_because: str = ""
 
-    @property
-    def improved(self) -> bool:
-        return len(self.rounds) > 1 and self.rounds[-1].agentic < self.rounds[0].agentic
 
-
-async def _tokens(task, memory) -> int:
+async def _round_llm_tokens(task, memory) -> int:
     """Both halves of a round's LLM cost.
 
     memory.token_usage counts only optexity's own calls -- the index fallback,
@@ -74,12 +47,14 @@ async def _tokens(task, memory) -> int:
     return agentic["total_tokens"] + memory.token_usage.total_tokens
 
 
-def resplice(trace: Trace, report, task) -> tuple[Trace, int]:
+def resolve_agentic_rows(trace: Trace, report, task) -> tuple[Trace, int]:
     """Replace each agentic row with what its own run turned out to be.
 
     Returns the rebuilt trace and how many rows became deterministic. Rows whose
     fresh history yields nothing usable are left agentic, so the path never
-    develops a hole.
+    develops a hole. The capture hook writes agent_history.json for a one-step
+    agent exactly as for a whole-task one, so each agentic node leaves fresh
+    evidence to distil.
     """
     rows = []
     resolved = 0
@@ -93,7 +68,7 @@ def resplice(trace: Trace, report, task) -> tuple[Trace, int]:
 
         # run_action_node increments step_index once per node, so the node's
         # position is the step directory its agentic run wrote to.
-        history = task.logs_directory / f"step_{position}" / "agent_history.json"
+        history = task.logs_directory / f"step_{position}" / AGENT_HISTORY_FILENAME
         if not history.exists():
             rows.append(row)
             continue
@@ -122,12 +97,12 @@ def resplice(trace: Trace, report, task) -> tuple[Trace, int]:
 async def improve(
     trace: Trace,
     automation: Automation,
-    build_run,
+    build_session,
     max_rounds: int = MAX_ROUNDS,
 ) -> tuple[Automation, Trace, LoopResult]:
     """Replay, learn from the agentic steps, recompile. Repeat.
 
-    ``build_run(label, automation)`` is an async callable returning a fresh
+    ``build_session(label, automation)`` is an async callable returning a fresh
     (task, memory, browser, teardown) for one round. It takes the automation
     because each round compiles a new one, and the task carries it. Every round
     needs its own browser: parameter placeholders are substituted into nodes in
@@ -140,7 +115,7 @@ async def improve(
     for number in range(1, max_rounds + 1):
         started = time.monotonic()
         label = f"round{number}_{uuid.uuid4()}"
-        task, memory, browser, teardown = await build_run(label, automation)
+        task, memory, browser, teardown = await build_session(label, automation)
         try:
             report = await verify_walk(
                 trace, deepcopy(automation), task, memory, browser
@@ -148,9 +123,7 @@ async def improve(
         finally:
             await teardown()
 
-        counts = {status: 0 for status in VerdictStatus}
-        for verdict in report.verdicts:
-            counts[verdict.status] += 1
+        counts = Counter(verdict.status for verdict in report.verdicts)
 
         round_result = RoundResult(
             number=number,
@@ -160,7 +133,7 @@ async def improve(
             unresolved=counts[VerdictStatus.DEMOTED]
             + counts[VerdictStatus.UNMEASURED]
             + counts[VerdictStatus.NOT_REACHED],
-            llm_tokens=await _tokens(task, memory),
+            llm_tokens=await _round_llm_tokens(task, memory),
             seconds=round(time.monotonic() - started, 1),
         )
         result.rounds.append(round_result)
@@ -187,7 +160,7 @@ async def improve(
             result.stopped_because = "every step is deterministic"
             return (*best, result)
 
-        trace, resolved = resplice(trace, report, task)
+        trace, resolved = resolve_agentic_rows(trace, report, task)
         if not resolved:
             result.stopped_because = (
                 f"{round_result.agentic} step(s) did not resolve on a second look; "

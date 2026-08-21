@@ -51,10 +51,10 @@ def missing_parameters(automation) -> list[str]:
     ]
 
 
-def make_build_run(headless: bool, port: int):
+def make_build_session(headless: bool, port: int):
     """A factory the loop calls once per round for a fresh browser and task."""
 
-    async def build_run(label: str, automation):
+    async def build_session(label: str, automation):
         task = build_task(automation)
         memory = Memory(unique_child_arn=label)
         memory.update_system_info()
@@ -98,7 +98,7 @@ def make_build_run(headless: bool, port: int):
             raise
         return task, memory, browser, teardown
 
-    return build_run
+    return build_session
 
 
 async def run(
@@ -118,15 +118,17 @@ async def run(
             + ". Supply them (they were redacted at capture) and re-run."
         )
 
-    build_run = make_build_run(headless, port)
+    build_session = make_build_session(headless, port)
 
     if rounds > 1:
+        # The loop keeps the automation as its best verified round left it, so
+        # there is nothing further to apply back onto it here.
         automation, trace, loop_result = await improve(
-            trace, automation, build_run, max_rounds=rounds
+            trace, automation, build_session, max_rounds=rounds
         )
         return {"trace": trace, "automation": automation, "loop": loop_result}
 
-    task, memory, browser, teardown = await build_run(
+    task, memory, browser, teardown = await build_session(
         f"verify_{uuid.uuid4()}", automation
     )
     try:
@@ -185,10 +187,12 @@ def main(argv: list[str] | None = None) -> int:
     result = asyncio.run(
         run(args.history, args.url, args.headless, args.port, args.rounds)
     )
-    if "loop" in result:
-        print(format_table(result["loop"]))
+    if loop_result := result.get("loop"):
+        print(format_table(loop_result))
+        succeeded = loop_result.converged
     else:
         _print_report(result["report"])
+        succeeded = result["report"].complete
 
     if args.out:
         args.out.write_text(
@@ -196,9 +200,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.trace_out:
         args.trace_out.write_text(result["trace"].model_dump_json(indent=2))
-    if "loop" in result:
-        return 0 if result["loop"].converged else 1
-    return 0 if result["report"].complete else 1
+    return 0 if succeeded else 1
 
 
 if __name__ == "__main__":

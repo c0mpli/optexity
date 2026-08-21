@@ -1,3 +1,5 @@
+import argparse
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -5,6 +7,8 @@ from pathlib import Path
 from browser_use.llm.messages import UserMessage
 from pydantic import BaseModel, Field, ValidationError
 
+from optexity.inference.models.chat_litellm import build_agent_llm
+from optexity.memory_layer.distill import distill
 from optexity.memory_layer.trace import placeholder
 from optexity.schema.automation import Automation
 
@@ -188,14 +192,8 @@ def _strip_fence(text: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    import argparse
-    import asyncio
-
-    from optexity.inference.models.chat_litellm import build_agent_llm
-    from optexity.memory_layer.distill import distill
-
     parser = argparse.ArgumentParser(
-        prog="python -m optexity.memory_layer.compile_llm",
+        prog="python -m optexity.memory_layer.enrich",
         description="Enrich a compiled automation with an LLM, without letting it "
         "author selectors.",
     )
