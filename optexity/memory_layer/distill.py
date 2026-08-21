@@ -5,8 +5,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from optexity.memory_layer.agent_history import load_trace
 from optexity.memory_layer.candidates import MINIMUM_STABILITY_SCORE, build_candidates
-from optexity.memory_layer.trace import Trace, TraceRow, load_trace
+from optexity.memory_layer.trace import Trace, TraceRow
 from optexity.schema.automation import Automation
 
 DETERMINISTIC_ACTIONS = {
