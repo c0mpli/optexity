@@ -8,12 +8,20 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from optexity.memory_layer.candidates import MINIMUM_STABILITY_SCORE
-from optexity.memory_layer.verify import locator_action
-from optexity.schema.automation import Automation
+from optexity.memory_layer.capture import RECOVERY_HISTORY_FILENAME
+from optexity.memory_layer.distill import classify, compile_nodes
+from optexity.memory_layer.trace import Classification, load_trace
+from optexity.memory_layer.verify import LOCATOR_FIELDS, locator_action
+from optexity.schema.automation import ActionNode, Automation
 
 logger = logging.getLogger(__name__)
 
 LOCATOR_CANDIDATES_FILENAME = "locator_candidates.json"
+# An inserted step is optional by construction: the overlay it clears may simply
+# not be there next run. One try and no prompt makes a miss cost a failed locator
+# lookup and nothing else -- no LLM call, and no raise, since the command path
+# returns its error rather than throwing unless assert_locator_presence is set.
+RECOVERY_MAX_TRIES = 1
 
 
 class NodeHeal(BaseModel):
@@ -24,8 +32,14 @@ class NodeHeal(BaseModel):
     score: int
 
 
+class NodeGrowth(BaseModel):
+    before: int
+    commands: list[str]
+
+
 class HealReport(BaseModel):
     heals: list[NodeHeal] = Field(default_factory=list)
+    growth: list[NodeGrowth] = Field(default_factory=list)
     rescued: int = 0
     nodes: int = 0
 
@@ -84,6 +98,42 @@ def best_command(candidates: list[dict]) -> tuple[str, str, int] | None:
     return None
 
 
+def recovered_nodes(step_directory: Path, url: str | None) -> list[ActionNode]:
+    """The steps an overlay-closing agent had to take, as optional nodes.
+
+    A blocked node makes the error classifier fire a popup closer, which is an
+    agent solving a step the recording never contained. Distilling what it did is
+    the only way the path grows -- healing alone can repair a node that moved but
+    never add one the site introduced.
+
+    Only deterministic rows are kept. Compiling an agentic node here would make
+    every future run pay an LLM to re-derive the same dismissal.
+    """
+    path = step_directory / RECOVERY_HISTORY_FILENAME
+    if not path.is_file():
+        return []
+
+    trace = load_trace(path)
+    classify(trace, url)
+    for row in trace.rows:
+        if row.classification != Classification.DETERMINISTIC:
+            row.classification = Classification.REDUNDANT
+
+    nodes = []
+    for node in compile_nodes(trace, {}, set()):
+        interaction = node.get("interaction_action") or {}
+        action = next(
+            (interaction[field] for field in LOCATOR_FIELDS if field in interaction),
+            None,
+        )
+        if action is None:
+            continue
+        interaction["max_tries"] = RECOVERY_MAX_TRIES
+        action["skip_prompt"] = True
+        nodes.append(ActionNode.model_validate(node))
+    return nodes
+
+
 def heal(automation: Automation, logs_directory: str | Path) -> HealReport:
     """Fold what the LLM fallback found back into the automation.
 
@@ -96,8 +146,19 @@ def heal(automation: Automation, logs_directory: str | Path) -> HealReport:
     """
     report = HealReport()
     logs = Path(logs_directory)
+    insertions: list[tuple[int, list[ActionNode]]] = []
 
     for position, node in enumerate(automation.nodes):
+        grown = recovered_nodes(logs / f"step_{position}", automation.url)
+        if grown:
+            insertions.append((position, grown))
+            report.growth.append(
+                NodeGrowth(
+                    before=position,
+                    commands=[locator_action(n).command for n in grown],
+                )
+            )
+
         action = locator_action(node)
         if action is None or not action.command:
             continue
@@ -123,6 +184,10 @@ def heal(automation: Automation, logs_directory: str | Path) -> HealReport:
         )
         action.command = command
 
+    # Last first, so an earlier insertion does not shift a later position.
+    for position, nodes in reversed(insertions):
+        automation.nodes[position:position] = nodes
+
     return report
 
 
@@ -136,7 +201,10 @@ def format_report(report: HealReport) -> str:
         lines.append(f"  node {node_heal.node}: {node_heal.kind} {node_heal.score}")
         lines.append(f"    was  {node_heal.was}")
         lines.append(f"    now  {node_heal.now}")
-    if not report.heals:
+    for growth in report.growth:
+        lines.append(f"  new step(s) before node {growth.before}:")
+        lines.extend(f"    + {command}" for command in growth.commands)
+    if not (report.heals or report.growth):
         lines.append("  nothing to heal")
     return "\n".join(lines)
 

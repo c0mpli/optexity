@@ -112,6 +112,28 @@ automation that is decaying. The report leads with that number:
 A rescue that turns up nothing above the threshold is counted but not applied —
 a positional xpath is how the original command drifted in the first place.
 
+### Growing the path
+
+Healing repairs a node that moved. A site that *adds* a step — a consent dialog,
+a new interstitial — needs the path to grow instead.
+
+That recovery already happens: when a node is blocked, the error classifier
+returns `overlay_popup_blocking` and fires a `CloseOverlayPopupAction`, an agent
+that dismisses the overlay so the node can retry. It is captured under
+`step_N/recovery_history.json`, distilled, and inserted **before** the node it
+unblocked, so the next run dismisses the dialog with a plain click.
+
+An inserted step is optional by construction, because the overlay may simply not
+be there next time — a cookie banner is gone once the cookie is set. It carries
+`max_tries: 1` and `skip_prompt: True`, and `command_based_action_with_retry`
+returns its error rather than raising unless `assert_locator_presence` is set. So
+a miss costs one failed locator lookup: no LLM call, no exception, run continues.
+This is the one node shape where `skip_prompt: True` is right — the step is
+meant to be skippable, so a silent no-op is the goal rather than a hidden failure.
+
+Only deterministic rows are kept. Compiling an agentic node here would make every
+future run pay an LLM to re-derive the same dismissal.
+
 ## Capturing your own run
 
 The three CLIs above all take an `agent_history.json`. To produce one, run an
@@ -142,5 +164,8 @@ transitions), `checkboxes_agentic.json` (two toggles).
   `not_reached`, rather than guessing. It refuses instead of inventing.
 - A non-deterministic **input** row halts the walk, so the loop cannot currently
   re-learn one — only agentic clicks and navigations round-trip.
+- The path grows only where the runtime already recovers, which today means an
+  overlay the error classifier recognises. A site that inserts a step nothing
+  recovers from still fails the run.
 - Redundancy is decided from recorded effects, not by ablation: a step is dropped
   because a later one supersedes it, never because removing it was tried.

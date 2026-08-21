@@ -317,14 +317,11 @@ def _agentic_node_for(row: TraceRow) -> dict[str, Any]:
     )
 
 
-def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
-    automation_url = url or trace.url
-    if not automation_url:
-        raise ValueError("no url: pass --url or capture a trace that records one")
-
-    parameters: dict[str, list[str]] = {}
-    already_used: set[str] = set()
-    nodes = [
+def compile_nodes(
+    trace: Trace, parameters: dict[str, list[str]], already_used: set[str]
+) -> list[dict[str, Any]]:
+    """One node per compiled row, declaring its parameters into ``parameters``."""
+    return [
         (
             _action_node_for(row, parameters, already_used)
             if row.classification == Classification.DETERMINISTIC
@@ -332,6 +329,16 @@ def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
         )
         for row in trace.compiled_rows()
     ]
+
+
+def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
+    automation_url = url or trace.url
+    if not automation_url:
+        raise ValueError("no url: pass --url or capture a trace that records one")
+
+    parameters: dict[str, list[str]] = {}
+    already_used: set[str] = set()
+    nodes = compile_nodes(trace, parameters, already_used)
 
     return Automation.model_validate(
         {

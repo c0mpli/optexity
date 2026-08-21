@@ -40,6 +40,13 @@ NAME_VALUE_SCORE = 88
 XPATH_ANCHOR_TAGS = ("dialog", "form", "table", "nav", "main", "article", "section")
 ANCHORED_XPATH_SCORE = 15
 
+# The last rung of workflow-use's selector ladder: text survives the classes and
+# ids around it changing. Scored above the bare-text rung because the tag
+# constrains it -- text alone resolves to whichever ancestor also contains it --
+# and below css, because visible copy is still translated and reworded.
+TAG_TEXT_SCORE = 45
+MAX_TAG_TEXT_CHARS = 60
+
 # browser-use records an accessible name but no role, so utils.py:225-238's
 # mapping is recomputed here.
 ROLE_BY_TAG = {"button": "button", "select": "combobox", "textarea": "textbox"}
@@ -154,6 +161,24 @@ def _readmitted_candidates(element: Element) -> list[Candidate]:
     return readmitted
 
 
+def _tag_text_candidates(element: Element) -> list[Candidate]:
+    """A control identified by its own visible text, scoped to its tag."""
+    text = (element.accessible_name or "").strip()
+    tag = (element.tag_name or "").strip()
+    if not (text and tag) or len(text) > MAX_TAG_TEXT_CHARS:
+        return []
+    if LocatorExtraction._looks_dynamic(text):
+        return []
+    return [
+        Candidate(
+            command=f'locator("{tag}").filter('
+            f"has_text={LocatorExtraction._quote_locator_value(text)})",
+            kind="tag+text",
+            stability_score=TAG_TEXT_SCORE,
+        )
+    ]
+
+
 def _unscored_attribute_candidates(element: Element) -> list[Candidate]:
     candidates = []
     for attribute, (score, locator) in UNSCORED_ATTRIBUTE_LOCATORS.items():
@@ -222,6 +247,11 @@ def _narrowed_candidates(candidates: list[Candidate]) -> list[Candidate]:
         if not candidate.command.endswith(suffix):
             continue
         selector = candidate.command[len(prefix) : -len(suffix)]
+        # A command with a trailing call also ends in "), so the slice can run past
+        # the selector into a later argument. Quoting proves it: _quote_locator_value
+        # wraps in double quotes, so a selector never contains one.
+        if '"' in selector:
+            continue
         # css pseudo-classes: meaningless on an xpath selector, pointless twice.
         if selector.startswith("xpath=") or any(
             narrowing in selector for narrowing in NARROWINGS
@@ -283,6 +313,7 @@ def build_candidates(element: Element) -> list[Candidate]:
         _readmitted_candidates(element)
         + _unscored_attribute_candidates(element)
         + _name_value_candidates(element)
+        + _tag_text_candidates(element)
         + _anchored_xpath_candidates(element)
     ):
         if extra_candidate.command not in seen_commands:

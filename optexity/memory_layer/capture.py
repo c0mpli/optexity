@@ -13,6 +13,9 @@ from optexity.schema.task import Task
 logger = logging.getLogger(__name__)
 
 AGENT_HISTORY_FILENAME = "agent_history.json"
+# A popup closer runs inside another node's step, so it is kept under its own
+# name: what it did is a step the recording never had, not that node's history.
+RECOVERY_HISTORY_FILENAME = "recovery_history.json"
 SUMMED_USAGE_FIELDS = (
     "entry_count",
     "total_prompt_tokens",
@@ -21,12 +24,15 @@ SUMMED_USAGE_FIELDS = (
 )
 
 
-def save_agent_history(agent: Agent, task: Task, step_index: int) -> None:
+def save_agent_history(
+    agent: Agent,
+    task: Task,
+    step_index: int,
+    filename: str = AGENT_HISTORY_FILENAME,
+) -> None:
     """Never raises: a capture failure must not fail an otherwise successful node."""
     try:
-        agent.save_history(
-            task.logs_directory / f"step_{step_index}" / AGENT_HISTORY_FILENAME
-        )
+        agent.save_history(task.logs_directory / f"step_{step_index}" / filename)
     except Exception as e:
         logger.warning(f"Could not save agent history: {e}")
 
