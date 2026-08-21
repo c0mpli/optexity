@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -23,6 +24,35 @@ LOCATOR_FIELDS = ("click_element", "input_text", "select_option", "upload_file")
 NAVIGATION_TIMEOUT_SECONDS = 10.0
 NAVIGATION_GRACE_SECONDS = 2.0
 NAVIGATING_ACTIONS = {"navigate", "go_back", "click"}
+DOWNLOAD_SETTLE_SECONDS = 10.0
+
+
+def downloads_present(browser) -> set[str]:
+    directory = Path(browser.temp_downloads_dir)
+    return (
+        {entry.name for entry in directory.iterdir()} if directory.is_dir() else set()
+    )
+
+
+async def wait_for_download(browser, before: set[str]) -> str | None:
+    """The file a node produced, if it produced one.
+
+    Chrome's download path is set browser-wide, so a file arrives whether or not
+    the node declared expect_download -- which is what lets this be measured
+    rather than guessed from the href.
+    """
+    if not downloads_present(browser) - before:
+        return None
+    deadline = time.monotonic() + DOWNLOAD_SETTLE_SECONDS
+    while time.monotonic() < deadline:
+        arrived = downloads_present(browser) - before
+        finished = [
+            name for name in arrived if not name.endswith((".crdownload", ".tmp"))
+        ]
+        if finished:
+            return sorted(finished)[0]
+        await asyncio.sleep(0.1)
+    return None
 
 
 class NodeVerdict(BaseModel):
@@ -31,6 +61,7 @@ class NodeVerdict(BaseModel):
     status: str  # verified | demoted | unmeasured | not_reached
     command: str | None = None
     reason: str = ""
+    downloaded: str | None = None
     probes_run: int = 0
     probe_seconds: float = 0.0
 
@@ -191,26 +222,24 @@ async def acted(
     return True, "no effect check for this action"
 
 
-def _set_command(node, command: str) -> bool:
-    """Point the node's interaction at a measured locator. False if it has none."""
+def locator_action(node):
+    """The node's interaction that carries a command, if it has one."""
     interaction = node.interaction_action
     if interaction is None:
-        return False
+        return None
     for field in LOCATOR_FIELDS:
         action = getattr(interaction, field, None)
-        if action is not None and hasattr(action, "command"):
-            action.command = command
-            return True
-    return False
+        if action is not None:
+            return action
+    return None
 
 
-def _needs_locator(node) -> bool:
-    interaction = node.interaction_action
-    if interaction is None:
+def _set_command(node, command: str) -> bool:
+    action = locator_action(node)
+    if action is None:
         return False
-    return any(
-        getattr(interaction, field, None) is not None for field in LOCATOR_FIELDS
-    )
+    action.command = command
+    return True
 
 
 def apply_verdicts(automation, report: VerificationReport) -> int:
@@ -220,10 +249,22 @@ def apply_verdicts(automation, report: VerificationReport) -> int:
     placeholders in place — so measured commands have to be written back onto
     the pristine nodes explicitly.
     """
+    # expected_downloads gates a wait loop in run_final_downloads_check, so
+    # leaving it at 0 means a replay tears the browser down without waiting for
+    # the file the walk just proved this automation produces.
+    automation.expected_downloads = sum(
+        1 for verdict in report.verdicts if verdict.downloaded
+    )
+
     applied = 0
     for verdict, node in zip(report.verdicts, automation.nodes, strict=False):
         if verdict.command and _set_command(node, verdict.command):
             applied += 1
+        # Only click carries these; a misaligned verdict must not raise here.
+        click = getattr(node.interaction_action, "click_element", None)
+        if verdict.downloaded and click is not None:
+            click.expect_download = True
+            click.download_filename = verdict.downloaded
     return applied
 
 
@@ -259,30 +300,28 @@ async def verify_walk(
 
         live_url = await browser.get_current_page_url()
 
-        if _needs_locator(node):
+        if locator_action(node) is not None:
             verdict.probes_run, verdict.probe_seconds = await probe_row(row, browser)
             command, reason = await choose_command(row, browser)
-            verdict.reason = reason
             if command is None or not _set_command(node, command):
-                # The recorded url is diagnosis, not a precondition: the
-                # distilled path deliberately skips the detours the agent took,
-                # so it legitimately reaches an element from a different page
-                # than the recording did. It only earns a mention once nothing
-                # matched, to separate "wrong page" from "bad locator".
+                # Distillation deletes the agent's detours, so reaching an
+                # element from a different page than the recording is normal.
                 if row.url_before and not same_page(live_url, row.url_before):
                     reason = f"{reason}; on {live_url}, recorded at {row.url_before}"
                 verdict.status = "demoted"
                 row.classification = "non_deterministic"
-                row.reason = reason
+                verdict.reason = row.reason = reason
                 report.verdicts.append(verdict)
                 report.stopped_at = position
                 report.stopped_because = (
                     "no measured locator for this row, so the path breaks here"
                 )
                 break
+            verdict.reason = reason
             verdict.command = command
 
         before_url = await browser.get_current_page_url()
+        downloads_before = downloads_present(browser)
         await run_action_node(node, task, memory, browser)
         if row.action in NAVIGATING_ACTIONS:
             await wait_for_navigation(
@@ -295,6 +334,9 @@ async def verify_walk(
                 ),
             )
 
+        if row.action == "click":
+            verdict.downloaded = await wait_for_download(browser, downloads_before)
+
         effective, evidence = await acted(row, node, browser, before_url)
         if not effective:
             verdict.status = "unmeasured"
@@ -305,6 +347,8 @@ async def verify_walk(
             break
 
         verdict.status = "verified"
+        if verdict.downloaded:
+            evidence = f"{evidence}; downloaded {verdict.downloaded}"
         verdict.reason = f"{verdict.reason}; {evidence}"
         report.verdicts.append(verdict)
 
@@ -322,10 +366,12 @@ async def verify_walk(
     report.signals = {
         "nodes": len(automation.nodes),
         "verified": report.verified_count,
-        "llm_tokens": getattr(memory, "token_usage", 0),
-        "downloaded_files": list(
-            getattr(getattr(memory, "variables", None), "downloaded_files", []) or []
-        ),
-        "output_data": "no output channel; not compared",
+        "llm_tokens": memory.token_usage.total_tokens,
+        "downloaded_files": [
+            verdict.downloaded for verdict in report.verdicts if verdict.downloaded
+        ],
+        "output_data": [
+            entry.model_dump(mode="json") for entry in memory.variables.output_data
+        ],
     }
     return report
