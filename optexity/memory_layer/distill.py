@@ -246,7 +246,10 @@ def _action_node_for(
         # this pure compiler cannot do. verify.choose_command adds one when it can.
         action: dict[str, Any] = {
             "command": best.command if best else None,
-            "skip_prompt": True,
+            # Catches a locator that has drifted; free when the command works,
+            # since the handler returns before reading skip_prompt.
+            "prompt_instructions": f"The element{_element_phrase(row)}.",
+            "skip_prompt": False,
         }
         if row.action == "input":
             action["input_text"] = _declare_parameter(
@@ -269,14 +272,18 @@ def _action_node_for(
     return _node(row, interaction)
 
 
+def _element_phrase(row: TraceRow) -> str:
+    element = row.element
+    if element is None:
+        return ""
+    label = element.label(PARAMETER_NAME_ATTRIBUTES)
+    named = f" labelled {label!r}" if label else ""
+    return named + (f" ({element.tag_name})" if element.tag_name else "")
+
+
 def _instruction_for(row: TraceRow) -> str:
     """A one-line instruction an agent can follow for a row we could not pin down."""
-    element = row.element
-    named = ""
-    if element:
-        label = element.label(PARAMETER_NAME_ATTRIBUTES)
-        named = f" labelled {label!r}" if label else ""
-        named += f" ({element.tag_name})" if element.tag_name else ""
+    named = _element_phrase(row)
 
     if row.action == "input":
         return f"Type {str(row.params.get('text', ''))!r} into the field{named}."
