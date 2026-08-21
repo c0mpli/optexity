@@ -1,9 +1,11 @@
+from optexity.schema.actions.interaction_action import BaseAction
+from optexity.schema.automation import ActionNode, Automation
 from optexity.schema.memory_layer import VerificationReport
 
 LOCATOR_FIELDS = ("click_element", "input_text", "select_option", "upload_file")
 
 
-def locator_action(node):
+def locator_action(node: ActionNode) -> BaseAction | None:
     """The node's interaction that carries a command, if it has one."""
     for field in LOCATOR_FIELDS:
         action = getattr(node.interaction_action, field, None)
@@ -12,7 +14,7 @@ def locator_action(node):
     return None
 
 
-def apply_verdicts(automation, report: VerificationReport) -> None:
+def apply_verdicts(automation: Automation, report: VerificationReport) -> None:
     """Copy measured commands onto the automation the caller keeps.
 
     The walk drives a throwaway copy — replace_variables consumes parameter

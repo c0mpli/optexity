@@ -1,18 +1,20 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from optexity.inference.infra.actual_browser import ActualBrowser
 from optexity.inference.infra.browser import Browser
 from optexity.inference.models import normalize_model
+from optexity.schema.automation import Automation
 from optexity.schema.memory import Memory
 from optexity.schema.task import Task
 
 logger = logging.getLogger(__name__)
 
 
-def build_task(automation, endpoint_name: str = "verify") -> Task:
+def build_task(automation: Automation, endpoint_name: str = "verify") -> Task:
     """run_action_node posts a trajectory every fifth step, so without
     upload_artifacts a verification pass fills the production store."""
     parameters = automation.parameters
@@ -34,7 +36,7 @@ def build_task(automation, endpoint_name: str = "verify") -> Task:
     )
 
 
-def missing_parameters(automation) -> list[str]:
+def missing_parameters(automation: Automation) -> list[str]:
     """An empty password makes every later node measure an error page, turning
     one missing input into a page of fabricated verdicts."""
     return [
@@ -44,7 +46,7 @@ def missing_parameters(automation) -> list[str]:
     ]
 
 
-def make_build_session(headless: bool, port: int):
+def make_build_session(headless: bool, port: int) -> Callable[..., Awaitable]:
     """A factory for one browser and task per call.
 
     Built per call rather than per process because a warm profile would let a
@@ -52,7 +54,7 @@ def make_build_session(headless: bool, port: int):
     run_action_node substitutes parameter placeholders into nodes in place.
     """
 
-    async def build_session(label: str, automation):
+    async def build_session(label: str, automation: Automation):
         task = build_task(automation)
         memory = Memory(unique_child_arn=label)
         memory.update_system_info()
