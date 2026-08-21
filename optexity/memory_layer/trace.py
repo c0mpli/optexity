@@ -136,9 +136,14 @@ class Trace(BaseModel):
     rows: list[TraceRow] = Field(default_factory=list)
 
     @property
-    def agentic_tokens(self) -> int:
-        """What the agent spent working the objective out: the cost to beat."""
-        return int(self.usage.get("total_tokens") or 0)
+    def agentic_tokens(self) -> int | None:
+        """What the agent spent working the objective out: the cost to beat.
+
+        None when the capture recorded no usage, which is not the same as zero:
+        an agentic run that reached the goal certainly spent tokens.
+        """
+        recorded = (self.usage or {}).get("total_tokens")
+        return None if recorded is None else int(recorded)
 
     @property
     def agentic_seconds(self) -> float:

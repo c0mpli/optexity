@@ -136,7 +136,11 @@ def _print_report(report, trace, seconds: float) -> None:
     print(f"\n  {'':<12}{'agentic':>10}{'verified':>10}")
     for label, before, after in (
         ("steps", len(trace.rows), len(report.verdicts)),
-        ("llm tokens", trace.agentic_tokens, report.signals["llm_tokens"]),
+        (
+            "llm tokens",
+            trace.agentic_tokens or "unrecorded",
+            report.signals["llm_tokens"],
+        ),
         ("seconds", round(trace.agentic_seconds, 1), round(seconds, 1)),
     ):
         print(f"  {label:<12}{before:>10}{after:>10}")
