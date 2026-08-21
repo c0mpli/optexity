@@ -38,22 +38,6 @@ HREF_SCORE = 60
 GROUPED_INPUT_TYPES = {"radio", "checkbox"}
 VALUE_NARROWED_SCORE = 88
 
-# Classes describing transient state were true only while the agent was there.
-STATE_CLASS_WORDS = {
-    "active",
-    "checked",
-    "current",
-    "disabled",
-    "expanded",
-    "focus",
-    "focused",
-    "hover",
-    "invalid",
-    "open",
-    "selected",
-    "touched",
-}
-
 # A path rooted at the nearest landmark survives markup churn above it.
 XPATH_ANCHOR_TAGS = ("dialog", "form", "table", "nav", "main", "article", "section")
 ANCHORED_XPATH_SCORE = 15
@@ -109,23 +93,6 @@ def _css_attribute_selector(tag_name: str, attribute: str, value: str) -> str:
     return f"{tag_name}[{attribute}='{_escaped(value)}']"
 
 
-def _without_state_classes(attributes: dict[str, str]) -> dict[str, str]:
-    classes = attributes.get("class")
-    if not classes:
-        return attributes
-    kept = [
-        name
-        for name in classes.split()
-        if not any(word in name.lower() for word in STATE_CLASS_WORDS)
-    ]
-    stable = dict(attributes)
-    if kept:
-        stable["class"] = " ".join(kept)
-    else:
-        stable.pop("class", None)
-    return stable
-
-
 class _RecordedElementAsNode:
     """The subset of a live DOM node _scored_candidates reads.
 
@@ -134,7 +101,7 @@ class _RecordedElementAsNode:
     """
 
     def __init__(self, element: Element):
-        self.attributes = _without_state_classes(element.attributes)
+        self.attributes = element.attributes
         self.tag_name = element.tag_name
         self.xpath = element.xpath
         accessible_name = (element.accessible_name or "").strip()

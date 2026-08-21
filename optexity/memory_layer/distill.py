@@ -63,21 +63,6 @@ CLASSIFICATION_MARKS = {
 }
 
 
-def _name_from_typed_value(text: str) -> str:
-    text = text.strip()
-    if re.match(r"^[\w.+-]+@[\w.-]+\.\w+$", text):
-        return "email"
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", text) or re.match(
-        r"^\d{1,2}/\d{1,2}/\d{2,4}$", text
-    ):
-        return "date"
-    if re.match(r"^\+?[\d\s().-]{7,}$", text):
-        return "phone"
-    if re.match(r"^-?\d+(\.\d+)?$", text):
-        return "number"
-    return "input"
-
-
 def _parameter_name_for(row: TraceRow, already_used: set[str]) -> str:
     name_sources = []
     if row.element:
@@ -98,7 +83,7 @@ def _parameter_name_for(row: TraceRow, already_used: set[str]) -> str:
         slug = re.sub(r"^\d+_?", "", slug)
         if slug:
             break
-    slug = slug or _name_from_typed_value(str(row.params.get("text", "")))
+    slug = slug or "input"
 
     name, suffix = slug, 2
     while name in already_used:
