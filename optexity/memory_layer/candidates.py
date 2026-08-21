@@ -74,6 +74,7 @@ ROLE_BY_INPUT_TYPE = {
 NARROWINGS = (":not([type='hidden'])", ":visible")
 NARROWING_PENALTY = 5
 
+
 # or_() is a union, so bundling is only unambiguous if each leg was separately
 # measured at exactly one match.
 MAX_BUNDLED_CANDIDATES = 2
