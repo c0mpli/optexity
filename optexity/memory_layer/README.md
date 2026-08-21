@@ -10,13 +10,17 @@ steps were load-bearing, and compiles them into locator-driven nodes — so the
 second run costs no tokens.
 
 ```
-capture ──▶ distill ──▶ verify ──▶ enrich      (Bonus A)
-   │           │           │
-   │           │           └─ measures each locator on the live page
+build once                          then, every production run
+──────────                          ─────────────────────────
+capture ──▶ distill ──▶ verify      run ──▶ did a node fall back?
+   │           │          │                        │
+   │           │          │                   heal ─┘
+   │           │          └─ measures each locator on the live page
    │           └─ deterministic / redundant / non-deterministic
    └─ saves the AgentHistoryList every caller used to discard
-                    │
-                    └──▶ loop ──▶ replay, re-learn, recompile   (Bonus B)
+              │
+              ├──▶ enrich   (Bonus A)
+              └──▶ loop     (Bonus B)
 ```
 
 | file | does |
@@ -28,6 +32,7 @@ capture ──▶ distill ──▶ verify ──▶ enrich      (Bonus A)
 | `verify.py` | walks the automation against a live page, verdict per node |
 | `enrich.py` | lets an LLM improve it under pydantic validation, without authoring selectors |
 | `loop.py` | replays, re-learns the agentic steps, recompiles, repeats |
+| `heal.py` | folds a production run's LLM fallbacks back into the automation |
 | `verify_runner.py` | CLI for verify and the loop |
 
 ## Run it
@@ -70,6 +75,42 @@ python -m optexity.memory_layer.enrich \
 
 It names parameters and writes fallback instructions. It cannot emit a `command`:
 `NodePatch` has no field to carry one, so a hallucinated selector has nowhere to go.
+
+## Keeping it deterministic
+
+Distilling is a one-off; a site changing is not. When a node's locator drifts, the
+`prompt_instructions` fallback rescues the run — correctly, but at LLM cost, and
+it will pay that cost again on every run after it.
+
+`heal` closes that loop:
+
+```bash
+python -m optexity.memory_layer.heal /tmp/roboform.json <task-logs-dir> -o /tmp/healed.json
+```
+
+The handlers reach `log_interacted_locator` only from the index-based path, which
+they only take once the command has failed. So `step_N/locator_candidates.json`
+existing means precisely: this node's locator broke, and the LLM found the element
+anyway — here it is. `heal` reads that, takes the strongest candidate above the
+stability threshold, and writes it back, so the next run is deterministic again.
+
+It reads only what a finished run already wrote. No browser, no replay, no second
+LLM call — which is what makes it usable on a flow that submits a form or takes a
+payment and therefore cannot be run twice to check.
+
+It exits non-zero when any node needed the LLM, so a scheduled run can alert on an
+automation that is decaying. The report leads with that number:
+
+```
+  1/4 nodes needed the LLM (75% deterministic)
+
+  node 1: label 80
+    was  locator("input[name='10address1']")
+    now  get_by_label('Address 1')
+```
+
+A rescue that turns up nothing above the threshold is counted but not applied —
+a positional xpath is how the original command drifted in the first place.
 
 ## Capturing your own run
 
