@@ -460,31 +460,15 @@ async def task_processor():
 
             # Must stay below the re-fetch above, which overwrites task.automation.
             if settings.TEST_AUTOMATION_PATH:
-                if os.path.exists(settings.TEST_AUTOMATION_PATH):
-                    with open(settings.TEST_AUTOMATION_PATH) as f:
-                        task.automation = Automation.model_validate(json.load(f))
-                    # Task.validate_unique_parameters demands the task's parameter
-                    # keys exactly equal the automation's, and the worker re-validates.
-                    params = task.automation.parameters
-                    task.input_parameters = {
-                        k: list(v) for k, v in params.input_parameters.items()
-                    }
-                    task.secure_parameters = {
-                        k: list(v) for k, v in params.secure_parameters.items()
-                    }
-                    task.unique_parameter_names = [
-                        n for n in task.unique_parameter_names
-                        if n in task.input_parameters or n in task.secure_parameters
-                    ]
-                    logger.warning(
-                        f"LOCAL OVERRIDE: automation replaced from "
-                        f"{settings.TEST_AUTOMATION_PATH}"
-                    )
-                else:
-                    logger.error(
-                        f"TEST_AUTOMATION_PATH is set but not found: "
-                        f"{settings.TEST_AUTOMATION_PATH}"
-                    )
+                with open(settings.TEST_AUTOMATION_PATH) as f:
+                    task.automation = Automation.model_validate(json.load(f))
+                # worker.py re-validates the Task, which requires these to match.
+                automation_parameters = task.automation.parameters
+                task.input_parameters = dict(automation_parameters.input_parameters)
+                task.secure_parameters = dict(automation_parameters.secure_parameters)
+                task.unique_parameter_names = []
+                logger.warning(f"LOCAL OVERRIDE: {settings.TEST_AUTOMATION_PATH}")
+
             task_running = True
             last_task_start_time = datetime.now(timezone.utc)
             current_task_timeout_minutes = task.max_timeout_in_minutes
