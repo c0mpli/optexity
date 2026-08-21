@@ -2,12 +2,12 @@ import json
 import logging
 from collections import Counter
 from pathlib import Path
-from typing import Any
 
 import aiofiles
 from browser_use import Agent
 
 from optexity.schema.memory import Memory
+from optexity.schema.memory_layer import CapturedUsage
 from optexity.schema.task import Task
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ def save_agent_history(agent: Agent, task: Task, step_index: int) -> None:
         logger.warning(f"Could not save agent history: {e}")
 
 
-async def summarize_token_usage(logs_directory: str | Path) -> dict[str, Any]:
+async def summarize_token_usage(logs_directory: str | Path) -> CapturedUsage:
     token_usage_totals = Counter(
         dict.fromkeys(("agentic_nodes", *SUMMED_USAGE_FIELDS), 0)
     )
@@ -51,7 +51,7 @@ async def summarize_token_usage(logs_directory: str | Path) -> dict[str, Any]:
             {field: node_token_usage.get(field) or 0 for field in SUMMED_USAGE_FIELDS}
         )
 
-    return dict(token_usage_totals)
+    return CapturedUsage(**token_usage_totals)
 
 
 async def total_llm_tokens(task: Task, memory: Memory) -> int:
@@ -62,4 +62,4 @@ async def total_llm_tokens(task: Task, memory: Memory) -> int:
     writers, so browser-use's spend exists solely in the capture files.
     """
     captured = await summarize_token_usage(task.logs_directory)
-    return captured["total_tokens"] + memory.token_usage.total_tokens
+    return captured.total_tokens + memory.token_usage.total_tokens
