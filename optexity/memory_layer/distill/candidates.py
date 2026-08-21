@@ -3,7 +3,7 @@ import re
 from types import SimpleNamespace
 
 from optexity.inference.core.interaction.utils import LocatorExtraction
-from optexity.memory_layer.trace import (
+from optexity.schema.memory_layer import (
     Candidate,
     Element,
     by_stability,

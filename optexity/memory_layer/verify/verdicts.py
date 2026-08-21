@@ -1,34 +1,6 @@
-from typing import Any
-
-from pydantic import BaseModel, Field
+from optexity.schema.memory_layer import VerificationReport
 
 LOCATOR_FIELDS = ("click_element", "input_text", "select_option", "upload_file")
-
-
-class NodeVerdict(BaseModel):
-    step: int
-    action: str
-    status: str  # verified | demoted | unmeasured | not_reached
-    command: str | None = None
-    reason: str = ""
-    downloaded: str | None = None
-
-
-class VerificationReport(BaseModel):
-    url: str | None = None
-    verdicts: list[NodeVerdict] = Field(default_factory=list)
-    stopped_at: int | None = None
-    stopped_because: str | None = None
-    final_url: str | None = None
-    signals: dict[str, Any] = Field(default_factory=dict)
-
-    @property
-    def verified_count(self) -> int:
-        return sum(1 for verdict in self.verdicts if verdict.status == "verified")
-
-    @property
-    def complete(self) -> bool:
-        return self.stopped_at is None and bool(self.verdicts)
 
 
 def locator_action(node):

@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from optexity.memory_layer.trace import Element, Trace, TraceRow
+from optexity.schema.memory_layer import Element, Trace, TraceRow
 
 
 def element_from_record(interacted_element: dict[str, Any]) -> Element:
