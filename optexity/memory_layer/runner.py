@@ -1,16 +1,13 @@
-import argparse
-import asyncio
 import logging
-import sys
 import time
 import uuid
 from copy import deepcopy
 from pathlib import Path
 
-from optexity.memory_layer.distill import distill
-from optexity.memory_layer.session import make_build_session, missing_parameters
-from optexity.memory_layer.verdicts import apply_verdicts
-from optexity.memory_layer.verify import verify_walk
+from optexity.memory_layer.distill.compiler import distill
+from optexity.memory_layer.verify.session import make_build_session, missing_parameters
+from optexity.memory_layer.verify.verdicts import apply_verdicts
+from optexity.memory_layer.verify.walk import verify_automation
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +30,9 @@ async def run(history_path: Path, url: str | None, headless: bool, port: int) ->
     try:
         # run_action_node substitutes in place; the caller keeps the original.
         started = time.monotonic()
-        report = await verify_walk(trace, deepcopy(automation), task, memory, browser)
+        report = await verify_automation(
+            trace, deepcopy(automation), task, memory, browser
+        )
         seconds = time.monotonic() - started
     finally:
         await teardown()
@@ -47,7 +46,7 @@ async def run(history_path: Path, url: str | None, headless: bool, port: int) ->
     }
 
 
-def _print_report(report, trace, seconds: float) -> None:
+def print_report(report, trace, seconds: float) -> None:
     print(f"\n{report.url}")
     print(f"  verified {report.verified_count}/{len(report.verdicts)} nodes")
     if report.stopped_at is not None:
@@ -75,38 +74,3 @@ def _print_report(report, trace, seconds: float) -> None:
     ):
         print(f"  {label:<12}{before:>10}{after:>10}")
     print()
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="python -m optexity.memory_layer.verify_runner",
-        description="Measure a distilled automation's locators against the live page.",
-    )
-    parser.add_argument("history", type=Path, help="path to agent_history.json")
-    parser.add_argument("-o", "--out", type=Path, help="write the verified automation")
-    parser.add_argument("--trace-out", type=Path, help="write the annotated trace")
-    parser.add_argument("--url")
-    parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--port", type=int, default=9222)
-    args = parser.parse_args(argv)
-
-    # optexity/__init__ already called basicConfig, so set levels directly.
-    logging.getLogger("optexity").setLevel(logging.INFO)
-    logging.getLogger("browser_use").setLevel(logging.WARNING)
-    if not args.history.exists():
-        parser.error(f"no such file: {args.history}")
-
-    result = asyncio.run(run(args.history, args.url, args.headless, args.port))
-    _print_report(result["report"], result["trace"], result["seconds"])
-
-    if args.out:
-        args.out.write_text(
-            result["automation"].model_dump_json(indent=2, exclude_none=True)
-        )
-    if args.trace_out:
-        args.trace_out.write_text(result["trace"].model_dump_json(indent=2))
-    return 0 if result["report"].complete else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())

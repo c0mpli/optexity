@@ -1,19 +1,19 @@
-import argparse
-import logging
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
 from optexity.memory_layer.agent_history import load_trace
-from optexity.memory_layer.candidates import MINIMUM_STABILITY_SCORE, build_candidates
-from optexity.memory_layer.trace import (
+from optexity.memory_layer.distill.candidates import (
+    MINIMUM_STABILITY_SCORE,
+    build_candidates,
+)
+from optexity.schema.automation import Automation
+from optexity.schema.memory_layer import (
     Classification,
     Trace,
     TraceRow,
     placeholder,
 )
-from optexity.schema.automation import Automation
 
 # Element actions and the InteractionAction field each compiles to. Everything
 # else about them -- command, skip_prompt, max_tries -- is identical.
@@ -344,7 +344,7 @@ def distill(history_path: Path, url: str | None = None) -> tuple[Automation, Tra
     return trace_to_automation(trace, url), trace
 
 
-def _print_summary(
+def print_summary(
     trace: Trace, automation: Automation, history_path: Path, out_path: Path
 ) -> None:
     counts = trace.counts_by_classification()
@@ -356,33 +356,3 @@ def _print_summary(
         mark = CLASSIFICATION_MARKS.get(row.classification, "????")
         print(f"  [{mark:>4}] {row.action:<16} {row.reason}")
     print()
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="python -m optexity.memory_layer.distill",
-        description="Compile a captured agentic run into a deterministic Automation.",
-    )
-    parser.add_argument("history", type=Path, help="path to agent_history.json")
-    parser.add_argument("-o", "--out", type=Path, required=True)
-    parser.add_argument("--url", help="automation url (defaults to the recorded one)")
-    parser.add_argument(
-        "--trace-out", type=Path, help="also write the labelled trace here"
-    )
-    args = parser.parse_args(argv)
-
-    logging.getLogger("optexity").setLevel(logging.INFO)
-    if not args.history.exists():
-        parser.error(f"no such file: {args.history}")
-
-    automation, trace = distill(args.history, args.url)
-    args.out.write_text(automation.model_dump_json(indent=2, exclude_none=True))
-    if args.trace_out:
-        args.trace_out.write_text(trace.model_dump_json(indent=2))
-
-    _print_summary(trace, automation, args.history, args.out)
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 from uvicorn import run
@@ -45,6 +46,46 @@ def run_inference(args: argparse.Namespace) -> None:
     )
 
 
+def run_distill(args: argparse.Namespace) -> None:
+    from optexity.memory_layer.distill.compiler import distill, print_summary
+
+    automation, trace = distill(args.history, args.url)
+    args.out.write_text(automation.model_dump_json(indent=2, exclude_none=True))
+    if args.trace_out:
+        args.trace_out.write_text(trace.model_dump_json(indent=2))
+    print_summary(trace, automation, args.history, args.out)
+
+
+def run_verify(args: argparse.Namespace) -> None:
+    import asyncio
+
+    from optexity.memory_layer.runner import print_report, run
+
+    result = asyncio.run(run(args.history, args.url, args.headless, args.port))
+    print_report(result["report"], result["trace"], result["seconds"])
+    if args.out:
+        args.out.write_text(
+            result["automation"].model_dump_json(indent=2, exclude_none=True)
+        )
+    if not result["report"].complete:
+        sys.exit(1)
+
+
+def run_enrich(args: argparse.Namespace) -> None:
+    import asyncio
+
+    from optexity.inference.models.chat_litellm import build_agent_llm
+    from optexity.memory_layer.distill.compiler import distill
+    from optexity.memory_layer.improve.enrich import enrich, print_enrichment
+
+    automation, trace = distill(args.history, args.url)
+    enriched = asyncio.run(
+        enrich(automation, trace, build_agent_llm(args.model), args.objective)
+    )
+    args.out.write_text(enriched.model_dump_json(indent=2, exclude_none=True))
+    print_enrichment(automation, enriched, args.history, args.out)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="optexity")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -75,6 +116,44 @@ def main() -> None:
     )
 
     inference_cmd.set_defaults(func=run_inference)
+
+    # ---------------------------
+    # distill
+    # ---------------------------
+    distill_cmd = subparsers.add_parser(
+        "distill", help="Compile a captured agentic run into an Automation"
+    )
+    distill_cmd.add_argument("history", type=Path, help="path to agent_history.json")
+    distill_cmd.add_argument("-o", "--out", type=Path, required=True)
+    distill_cmd.add_argument("--url", help="defaults to the recorded url")
+    distill_cmd.add_argument("--trace-out", type=Path, help="also write the trace")
+    distill_cmd.set_defaults(func=run_distill)
+
+    # ---------------------------
+    # verify
+    # ---------------------------
+    verify_cmd = subparsers.add_parser(
+        "verify", help="Measure a distilled automation against the live page"
+    )
+    verify_cmd.add_argument("history", type=Path, help="path to agent_history.json")
+    verify_cmd.add_argument("-o", "--out", type=Path)
+    verify_cmd.add_argument("--url", help="defaults to the recorded url")
+    verify_cmd.add_argument("--headless", action="store_true")
+    verify_cmd.add_argument("--port", type=int, default=9222)
+    verify_cmd.set_defaults(func=run_verify)
+
+    # ---------------------------
+    # enrich
+    # ---------------------------
+    enrich_cmd = subparsers.add_parser(
+        "enrich", help="Let an LLM improve a compiled automation"
+    )
+    enrich_cmd.add_argument("history", type=Path, help="path to agent_history.json")
+    enrich_cmd.add_argument("-o", "--out", type=Path, required=True)
+    enrich_cmd.add_argument("--url", help="defaults to the recorded url")
+    enrich_cmd.add_argument("--objective", default="")
+    enrich_cmd.add_argument("--model")
+    enrich_cmd.set_defaults(func=run_enrich)
 
     args = parser.parse_args()
     args.func(args)

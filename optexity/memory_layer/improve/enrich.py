@@ -1,16 +1,12 @@
-import argparse
-import asyncio
 import json
 import logging
 from pathlib import Path
 
 from browser_use.llm.messages import UserMessage
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
-from optexity.inference.models.chat_litellm import build_agent_llm
-from optexity.memory_layer.distill import distill
-from optexity.memory_layer.trace import placeholder
 from optexity.schema.automation import Automation
+from optexity.schema.memory_layer import AutomationPatch, placeholder
 
 logger = logging.getLogger(__name__)
 
@@ -22,22 +18,6 @@ DOCS = (
     / "action-types"
     / "interaction-action.mdx"
 )
-
-
-class NodePatch(BaseModel):
-    index: int
-    prompt_instructions: str | None = None
-    agentic_task: str | None = None
-
-
-class AutomationPatch(BaseModel):
-    """Everything the model is allowed to change. Notably absent: command — with
-    nowhere in the patch to put one, the eval(f"page.{command}") surface in
-    browser.py stays closed by the shape of the request, not by validation."""
-
-    rename_parameters: dict[str, str] = Field(default_factory=dict)
-    constant_parameters: list[str] = Field(default_factory=list)
-    nodes: list[NodePatch] = Field(default_factory=list)
 
 
 PROMPT = """You are improving a browser automation compiled from a recording of an AI
@@ -191,36 +171,10 @@ def _strip_fence(text: str) -> str:
     return text.strip()
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="python -m optexity.memory_layer.enrich",
-        description="Enrich a compiled automation with an LLM, without letting it "
-        "author selectors.",
-    )
-    parser.add_argument("history", type=Path, help="path to agent_history.json")
-    parser.add_argument("-o", "--out", type=Path, required=True)
-    parser.add_argument("--url")
-    parser.add_argument("--objective", default="", help="the original agentic task")
-    parser.add_argument("--model", help="litellm model string; defaults to LLM_MODEL")
-    args = parser.parse_args(argv)
-
-    # optexity/__init__ already called basicConfig, so set the level directly --
-    # enrich reports whether a patch applied only through logging.
-    logging.getLogger("optexity").setLevel(logging.INFO)
-    if not args.history.exists():
-        parser.error(f"no such file: {args.history}")
-
-    automation, trace = distill(args.history, args.url)
-    enriched = asyncio.run(
-        enrich(automation, trace, build_agent_llm(args.model), args.objective)
-    )
-    args.out.write_text(enriched.model_dump_json(indent=2, exclude_none=True))
-
-    before = automation.parameters.input_parameters
-    after = enriched.parameters.input_parameters
-    print(f"\n{args.history}  ->  {args.out}")
-    print(f"  parameters : {list(before)}")
-    print(f"            -> {list(after)}")
+def print_enrichment(automation, enriched, history_path, out_path) -> None:
+    print(f"\n{history_path}  ->  {out_path}")
+    print(f"  parameters : {list(automation.parameters.input_parameters)}")
+    print(f"            -> {list(enriched.parameters.input_parameters)}")
     print()
     for index, (old_node, new_node) in enumerate(
         zip(automation.nodes, enriched.nodes, strict=True)
@@ -230,8 +184,3 @@ def main(argv: list[str] | None = None) -> int:
         if old_task != new_task:
             print(f"  node {index} task : {old_task!r}\n              -> {new_task!r}")
     print()
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

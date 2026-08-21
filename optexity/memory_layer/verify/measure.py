@@ -1,8 +1,11 @@
 import logging
 import time
 
-from optexity.memory_layer.candidates import MINIMUM_STABILITY_SCORE, propose_bundle
-from optexity.memory_layer.trace import TraceRow, by_stability, verified_candidates
+from optexity.memory_layer.distill.candidates import (
+    MINIMUM_STABILITY_SCORE,
+    propose_bundle,
+)
+from optexity.schema.memory_layer import TraceRow, by_stability, verified_candidates
 
 logger = logging.getLogger(__name__)
 

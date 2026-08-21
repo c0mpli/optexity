@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from optexity.memory_layer.trace import TraceRow
+from optexity.schema.memory_layer import TraceRow
 
 # otherwise be judged inert.
 NAVIGATION_TIMEOUT_SECONDS = 10.0
