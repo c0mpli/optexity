@@ -5,10 +5,9 @@ from types import SimpleNamespace
 from optexity.inference.core.interaction.utils import LocatorExtraction
 from optexity.memory_layer.trace import Candidate, Element
 
-# _looks_dynamic discards letters-plus-two-digits segments as framework-
-# generated, which also discards hand-written names like RoboForm's 04fullname.
-# It stays untouched -- it sits on the live LLM-fallback path -- so those values
-# are re-admitted here instead, one rung lower.
+# _looks_dynamic discards letters-plus-two-digits names like RoboForm's
+# 04fullname. It sits on the live LLM-fallback path, so rather than change it
+# those values are re-admitted here, one rung lower.
 REJECTED_ATTRIBUTE_SCORES = {
     "data-testid": 100,
     "data-test-id": 98,
@@ -20,14 +19,12 @@ REJECTED_ATTRIBUTE_SCORES = {
 }
 READMISSION_PENALTY = 10
 
-# Upstream _css_attr interpolates values raw, so one carrying a quote yields a
-# selector that cannot parse. Those are rebuilt escaped, the originals dropped.
+# Upstream _css_attr interpolates raw, so a value carrying a quote cannot parse.
 CSS_ATTRIBUTE_GROUP = re.compile(r"\[([^\[\]]*)\]")
 WELL_FORMED_CSS_ATTRIBUTE = re.compile(r"^[\w:-]+([~^|*$]?=)'(?:[^'\\]|\\.)*'$")
 MINIMUM_STABILITY_SCORE = 40
 
-# Identifying attributes upstream never looks at, scored into its ladder:
-# title/alt under aria-label, href above text since a target outlives wording.
+# Identifying attributes upstream never looks at, scored into its ladder.
 UNSCORED_ATTRIBUTE_LOCATORS = {
     "title": (74, "get_by_title"),
     "alt": (73, "get_by_alt_text"),
@@ -38,12 +35,11 @@ HREF_SCORE = 60
 GROUPED_INPUT_TYPES = {"radio", "checkbox"}
 VALUE_NARROWED_SCORE = 88
 
-# A path rooted at the nearest landmark survives markup churn above it.
 XPATH_ANCHOR_TAGS = ("dialog", "form", "table", "nav", "main", "article", "section")
 ANCHORED_XPATH_SCORE = 15
 
 # browser-use records an accessible name but no role, so utils.py:225-238's
-# implicit-ARIA mapping is recomputed here from tag and type.
+# implicit-ARIA mapping is recomputed here.
 ROLE_BY_TAG = {"button": "button", "select": "combobox", "textarea": "textbox"}
 ROLE_BY_INPUT_TYPE = {
     "checkbox": "checkbox",
@@ -60,15 +56,13 @@ ROLE_BY_INPUT_TYPE = {
     "number": "spinbutton",
 }
 
-# Tried when a selector matches more than one element, so an element merely
-# shadowed by a hidden twin still yields a deterministic node.
+# Tried when a selector matches more than one element.
 NARROWINGS = (":not([type='hidden'])", ":visible")
 NARROWING_PENALTY = 5
 
 # or_() is a union, so bundling is only unambiguous if each leg was separately
 # measured at exactly one match.
 MAX_BUNDLED_CANDIDATES = 2
-# Compared by underlying signal, so a bundle's legs fail for different reasons.
 KIND_FAMILY_ALIASES = {"css+text": "css", "role+text": "text"}
 
 
@@ -94,11 +88,8 @@ def _css_attribute_selector(tag_name: str, attribute: str, value: str) -> str:
 
 
 class _RecordedElementAsNode:
-    """The subset of a live DOM node _scored_candidates reads.
-
-    ax_node unlocks its role+name and text rungs -- the only candidates a plain
-    button has, and the only family independent of id/name/class.
-    """
+    """The subset of a live DOM node _scored_candidates reads. ax_node unlocks
+    its role+name rung, the only family independent of id/name/class."""
 
     def __init__(self, element: Element):
         self.attributes = element.attributes
@@ -144,8 +135,7 @@ def _readmitted_candidates(element: Element) -> list[Candidate]:
             continue
         rejected = LocatorExtraction._looks_dynamic(value)
         needs_escaping = "'" in value or "\\" in value
-        # Rebuilt-for-escaping values keep their full score: nothing about them
-        # was judged unstable.
+        # Rebuilt-for-escaping values keep their full score.
         if not rejected and not needs_escaping:
             continue
         selector = LocatorExtraction._quote_locator_value(
@@ -252,11 +242,9 @@ def _narrowed_candidates(candidates: list[Candidate]) -> list[Candidate]:
 
 
 def bundle_verified_candidates(candidates: list[Candidate]) -> str | None:
-    """One command falling through to the next locator if the first stops matching.
-
-    The schema stores a single command per node, so an or_() chain is the only
-    way to persist a ranked fallback. None while nothing has been probed.
-    """
+    """One command falling through to the next locator if the first stops
+    matching. The schema stores one command per node, so an or_() chain is the
+    only way to persist a ranked fallback. None while nothing has been probed."""
     verified = sorted(
         (
             candidate
@@ -269,8 +257,7 @@ def bundle_verified_candidates(candidates: list[Candidate]) -> str | None:
     if not verified:
         return None
 
-    # Fall through to a differently-derived locator, not a variant of the same
-    # one, which would break on the same change.
+    # A differently-derived locator, not a variant that breaks on the same change.
     bundled: list[Candidate] = []
     families: set[str] = set()
     for candidate in verified:
