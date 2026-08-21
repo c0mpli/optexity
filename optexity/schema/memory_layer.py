@@ -183,13 +183,21 @@ class NodeVerdict(BaseModel):
     downloaded: str | None = None
 
 
+class RunSignals(BaseModel):
+    """What the run produced besides the per-node verdicts."""
+
+    llm_tokens: int = 0
+    downloaded_files: list[str] = Field(default_factory=list)
+    output_data: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class VerificationReport(BaseModel):
     url: str | None = None
     verdicts: list[NodeVerdict] = Field(default_factory=list)
     stopped_at: int | None = None
     stopped_because: str | None = None
     final_url: str | None = None
-    signals: dict[str, Any] = Field(default_factory=dict)
+    signals: RunSignals = Field(default_factory=RunSignals)
 
     @property
     def verified_count(self) -> int:
