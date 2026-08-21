@@ -490,7 +490,7 @@ async def run_action_node(
         raise e
     finally:
         await save_latest_memory_state_locally(task, memory, action_node)
-        if memory.automation_state.step_index % 5 == 0:
+        if task.upload_artifacts and memory.automation_state.step_index % 5 == 0:
             await save_trajectory_in_server(task)
 
     if action_node.expect_new_tab:
