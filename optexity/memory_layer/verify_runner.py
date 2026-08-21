@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import time
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -121,8 +122,6 @@ async def run(
     build_session = make_build_session(headless, port)
 
     if rounds > 1:
-        # The loop keeps the automation as its best verified round left it, so
-        # there is nothing further to apply back onto it here.
         automation, trace, loop_result = await improve(
             trace, automation, build_session, max_rounds=rounds
         )
@@ -133,15 +132,22 @@ async def run(
     )
     try:
         # run_action_node substitutes in place; the caller keeps the original.
+        started = time.monotonic()
         report = await verify_walk(trace, deepcopy(automation), task, memory, browser)
+        seconds = time.monotonic() - started
     finally:
         await teardown()
 
     apply_verdicts(automation, report)
-    return {"trace": trace, "automation": automation, "report": report}
+    return {
+        "trace": trace,
+        "automation": automation,
+        "report": report,
+        "seconds": seconds,
+    }
 
 
-def _print_report(report) -> None:
+def _print_report(report, trace, seconds: float) -> None:
     print(f"\n{report.url}")
     print(f"  verified {report.verified_count}/{len(report.verdicts)} nodes")
     if report.stopped_at is not None:
@@ -156,6 +162,16 @@ def _print_report(report) -> None:
     print(f"\n  final url: {report.final_url}")
     for key, value in report.signals.items():
         print(f"  {key}: {value}")
+
+    # Both clocks exclude browser startup. The walk's also covers probing, which
+    # a plain replay does not pay, so this reads as an upper bound on the cost.
+    print(f"\n  {'':<12}{'agentic':>10}{'verified':>10}")
+    for label, before, after in (
+        ("steps", len(trace.rows), len(report.verdicts)),
+        ("llm tokens", trace.agentic_tokens, report.signals["llm_tokens"]),
+        ("seconds", round(trace.agentic_seconds, 1), round(seconds, 1)),
+    ):
+        print(f"  {label:<12}{before:>10}{after:>10}")
     print()
 
 
@@ -188,10 +204,10 @@ def main(argv: list[str] | None = None) -> int:
         run(args.history, args.url, args.headless, args.port, args.rounds)
     )
     if loop_result := result.get("loop"):
-        print(format_table(loop_result))
+        print(format_table(loop_result, result["trace"]))
         succeeded = loop_result.converged
     else:
-        _print_report(result["report"])
+        _print_report(result["report"], result["trace"], result["seconds"])
         succeeded = result["report"].complete
 
     if args.out:

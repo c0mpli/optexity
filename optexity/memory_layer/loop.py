@@ -6,13 +6,14 @@ from copy import deepcopy
 
 from pydantic import BaseModel, Field
 
-from optexity.memory_layer.capture import (
-    AGENT_HISTORY_FILENAME,
-    summarize_token_usage,
-)
+from optexity.memory_layer.capture import AGENT_HISTORY_FILENAME, total_llm_tokens
 from optexity.memory_layer.distill import classify, trace_to_automation
 from optexity.memory_layer.trace import Classification, Trace, load_trace
-from optexity.memory_layer.verify import VerdictStatus, verify_walk
+from optexity.memory_layer.verify import (
+    VerdictStatus,
+    apply_verdicts,
+    verify_walk,
+)
 from optexity.schema.automation import Automation
 
 logger = logging.getLogger(__name__)
@@ -34,17 +35,6 @@ class LoopResult(BaseModel):
     rounds: list[RoundResult] = Field(default_factory=list)
     converged: bool = False
     stopped_because: str = ""
-
-
-async def _round_llm_tokens(task, memory) -> int:
-    """Both halves of a round's LLM cost.
-
-    memory.token_usage counts only optexity's own calls -- the index fallback,
-    error handling, select prediction. handle_agentic_task is not among its
-    writers, so browser-use's spend exists solely in the capture files.
-    """
-    agentic = await summarize_token_usage(task.logs_directory)
-    return agentic["total_tokens"] + memory.token_usage.total_tokens
 
 
 def resolve_agentic_rows(trace: Trace, report, task) -> tuple[Trace, int]:
@@ -123,6 +113,12 @@ async def improve(
         finally:
             await teardown()
 
+        # The walk measures a copy, because run_action_node substitutes parameter
+        # placeholders in place. Without this the round's findings -- the probed
+        # commands, expect_download -- die with the copy and the loop returns the
+        # automation it started with.
+        apply_verdicts(automation, report)
+
         counts = Counter(verdict.status for verdict in report.verdicts)
 
         round_result = RoundResult(
@@ -133,7 +129,7 @@ async def improve(
             unresolved=counts[VerdictStatus.DEMOTED]
             + counts[VerdictStatus.UNMEASURED]
             + counts[VerdictStatus.NOT_REACHED],
-            llm_tokens=await _round_llm_tokens(task, memory),
+            llm_tokens=await total_llm_tokens(task, memory),
             seconds=round(time.monotonic() - started, 1),
         )
         result.rounds.append(round_result)
@@ -155,7 +151,16 @@ async def improve(
 
         best = (automation, trace)
 
-        if round_result.agentic == 0:
+        # Only agentic rows can be re-learned, and the walk stops on a row that is
+        # not one, so another round would stop in the same place.
+        if not report.complete:
+            result.stopped_because = f"round {number} stopped: {report.stopped_because}"
+            return (*best, result)
+
+        # Every step deterministic and measured. On agentic alone, a pass that
+        # demoted or never reached its nodes claimed convergence directly above a
+        # table reading zero verified.
+        if round_result.agentic == 0 and round_result.unresolved == 0:
             result.converged = True
             result.stopped_because = "every step is deterministic"
             return (*best, result)
@@ -174,11 +179,13 @@ async def improve(
     return (*best, result)
 
 
-def format_table(result: LoopResult) -> str:
-    """The before/after the assignment asks for, one row per round."""
+def format_table(result: LoopResult, trace: Trace) -> str:
+    """The before/after the assignment asks for: the agentic run, then each round."""
     lines = [
         "  round   nodes   verified   agentic   unresolved   llm tokens   seconds",
         "  " + "-" * 68,
+        f"  {'agent':>5}   {len(trace.rows):>5}   {'-':>8}   {len(trace.rows):>7}   "
+        f"{'-':>10}   {trace.agentic_tokens:>10}   {trace.agentic_seconds:>7.1f}",
     ]
     for round_result in result.rounds:
         lines.append(

@@ -7,6 +7,7 @@ from typing import Any
 import aiofiles
 from browser_use import Agent
 
+from optexity.schema.memory import Memory
 from optexity.schema.task import Task
 
 logger = logging.getLogger(__name__)
@@ -51,3 +52,14 @@ async def summarize_token_usage(logs_directory: str | Path) -> dict[str, Any]:
         )
 
     return dict(token_usage_totals)
+
+
+async def total_llm_tokens(task: Task, memory: Memory) -> int:
+    """Both halves of a run's LLM cost.
+
+    memory.token_usage counts only optexity's own calls -- the index fallback,
+    error handling, select prediction. handle_agentic_task is not among its
+    writers, so browser-use's spend exists solely in the capture files.
+    """
+    captured = await summarize_token_usage(task.logs_directory)
+    return captured["total_tokens"] + memory.token_usage.total_tokens
