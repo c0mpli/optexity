@@ -1,19 +1,20 @@
-import argparse
 import ast
 import json
 import logging
-import sys
 from pathlib import Path
 
-from pydantic import BaseModel, Field
-
 from optexity.memory_layer.agent_history import load_trace
-from optexity.memory_layer.candidates import MINIMUM_STABILITY_SCORE
 from optexity.memory_layer.capture import RECOVERY_HISTORY_FILENAME
-from optexity.memory_layer.distill import classify, compile_nodes
-from optexity.memory_layer.trace import Classification
-from optexity.memory_layer.verdicts import LOCATOR_FIELDS, locator_action
+from optexity.memory_layer.distill.candidates import MINIMUM_STABILITY_SCORE
+from optexity.memory_layer.distill.compiler import classify, compile_nodes
+from optexity.memory_layer.verify.verdicts import LOCATOR_FIELDS, locator_action
 from optexity.schema.automation import ActionNode, Automation
+from optexity.schema.memory_layer import (
+    Classification,
+    HealReport,
+    NodeGrowth,
+    NodeHeal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,31 +24,6 @@ LOCATOR_CANDIDATES_FILENAME = "locator_candidates.json"
 # lookup and nothing else -- no LLM call, and no raise, since the command path
 # returns its error rather than throwing unless assert_locator_presence is set.
 RECOVERY_MAX_TRIES = 1
-
-
-class NodeHeal(BaseModel):
-    node: int
-    was: str | None
-    now: str
-    kind: str
-    score: int
-
-
-class NodeGrowth(BaseModel):
-    before: int
-    commands: list[str]
-
-
-class HealReport(BaseModel):
-    heals: list[NodeHeal] = Field(default_factory=list)
-    growth: list[NodeGrowth] = Field(default_factory=list)
-    rescued: int = 0
-    nodes: int = 0
-
-    @property
-    def determinism(self) -> float:
-        """Share of locator-driven nodes that ran without the LLM."""
-        return 1.0 if not self.nodes else 1 - self.rescued / self.nodes
 
 
 def command_from_recorded(expression: str) -> str | None:
@@ -208,33 +184,3 @@ def format_report(report: HealReport) -> str:
     if not (report.heals or report.growth):
         lines.append("  nothing to heal")
     return "\n".join(lines)
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="python -m optexity.memory_layer.heal",
-        description="Fold a finished run's LLM fallbacks back into its automation.",
-    )
-    parser.add_argument("automation", type=Path, help="the automation that was run")
-    parser.add_argument("logs", type=Path, help="that run's logs directory")
-    parser.add_argument("-o", "--out", type=Path, help="write the healed automation")
-    args = parser.parse_args(argv)
-
-    logging.getLogger("optexity").setLevel(logging.INFO)
-    for path in (args.automation, args.logs):
-        if not path.exists():
-            parser.error(f"no such path: {path}")
-
-    automation = Automation.model_validate_json(args.automation.read_text())
-    report = heal(automation, args.logs)
-    print(f"\n{args.automation}")
-    print(format_report(report))
-    print()
-
-    if args.out:
-        args.out.write_text(automation.model_dump_json(indent=2, exclude_none=True))
-    return 0 if report.rescued == 0 else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())

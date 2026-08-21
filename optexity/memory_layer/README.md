@@ -23,25 +23,31 @@ capture ──▶ distill ──▶ verify      run ──▶ did a node fall ba
               └──▶ loop
 ```
 
-| file | does |
+Models live in `optexity/schema/memory_layer.py`, next to the other packages'
+schemas. Behaviour is grouped by phase:
+
+| module | does |
 |---|---|
 | `capture.py` | saves `agent_history.json` per agentic node; sums both halves of the token bill |
-| `trace.py` | the recorded run as rows: action, element, candidate locators, timings |
-| `candidates.py` | ranked Playwright locators for a recorded element |
-| `distill.py` | classifies rows, emits an `Automation` |
-| `verify.py` | walks the automation against a live page, verdict per node |
-| `enrich.py` | lets an LLM improve it under pydantic validation, without authoring selectors |
-| `loop.py` | replays, re-learns the agentic steps, recompiles, repeats |
-| `heal.py` | folds a production run's LLM fallbacks back into the automation |
-| `verify_runner.py` | CLI for verify and the loop |
+| `agent_history.py` | reads browser-use's on-disk history into a `Trace` |
+| `distill/candidates.py` | ranked Playwright locators for a recorded element |
+| `distill/compiler.py` | classifies rows, emits an `Automation` |
+| `verify/walk.py` | walks the automation against a live page, verdict per node |
+| `verify/measure.py` | probes a candidate, picks the command to ship |
+| `verify/effects.py` | waits for a navigation or download, reads back what happened |
+| `verify/verdicts.py` | reads and writes verdicts onto the automation |
+| `verify/session.py` | one browser and task per run |
+| `improve/enrich.py` | lets an LLM improve it under pydantic validation, without authoring selectors |
+| `improve/loop.py` | replays, re-learns the agentic steps, recompiles, repeats |
+| `improve/heal.py` | folds a production run's LLM fallbacks back into the automation |
+| `runner.py` | orchestrates a verify pass; `optexity verify` calls it |
 
 ## Run it
 
 Distilling needs no browser and no API key, so start here:
 
 ```bash
-python -m optexity.memory_layer.distill \
-    automations/roboform_agent_history.json -o /tmp/roboform.json
+optexity distill automations/roboform_agent_history.json -o /tmp/roboform.json
 ```
 
 That fixture is a real captured run, committed so the pipeline is runnable from a
@@ -57,8 +63,7 @@ nodes. Its `password` parameter comes out empty: a value typed into a
 Measuring the result against the live page needs a browser:
 
 ```bash
-python -m optexity.memory_layer.verify_runner \
-    automations/roboform_agent_history.json -o /tmp/verified.json
+optexity verify automations/roboform_agent_history.json -o /tmp/verified.json
 ```
 
 Each node is probed for a unique match, run, and then checked for an observable
@@ -74,8 +79,7 @@ stops on a node it cannot measure, or when a round learns nothing new.
 Enrichment is a separate step, since an LLM is optional to the pipeline:
 
 ```bash
-python -m optexity.memory_layer.enrich \
-    automations/roboform_agent_history.json -o /tmp/enriched.json \
+optexity enrich automations/roboform_agent_history.json -o /tmp/enriched.json \
     --objective "fill in the contact form"
 ```
 
@@ -91,7 +95,7 @@ it will pay that cost again on every run after it.
 `heal` closes that loop:
 
 ```bash
-python -m optexity.memory_layer.heal /tmp/roboform.json <task-logs-dir> -o /tmp/healed.json
+optexity heal /tmp/roboform.json <task-logs-dir> -o /tmp/healed.json
 ```
 
 The handlers reach `log_interacted_locator` only from the index-based path, which

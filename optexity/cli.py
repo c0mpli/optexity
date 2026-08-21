@@ -59,9 +59,8 @@ def run_distill(args: argparse.Namespace) -> None:
 def run_verify(args: argparse.Namespace) -> None:
     import asyncio
 
-    from optexity.memory_layer.runner import print_report, run
-
     from optexity.memory_layer.improve.loop import format_table
+    from optexity.memory_layer.runner import print_report, run
 
     result = asyncio.run(
         run(args.history, args.url, args.headless, args.port, args.rounds)
@@ -93,6 +92,21 @@ def run_enrich(args: argparse.Namespace) -> None:
     )
     args.out.write_text(enriched.model_dump_json(indent=2, exclude_none=True))
     print_enrichment(automation, enriched, args.history, args.out)
+
+
+def run_heal(args: argparse.Namespace) -> None:
+    from optexity.memory_layer.improve.heal import format_report, heal
+    from optexity.schema.automation import Automation
+
+    automation = Automation.model_validate_json(args.automation.read_text())
+    report = heal(automation, args.logs)
+    print(f"\n{args.automation}")
+    print(format_report(report))
+    print()
+    if args.out:
+        args.out.write_text(automation.model_dump_json(indent=2, exclude_none=True))
+    if report.rescued:
+        sys.exit(1)
 
 
 def main() -> None:
@@ -169,6 +183,17 @@ def main() -> None:
     enrich_cmd.add_argument("--objective", default="")
     enrich_cmd.add_argument("--model")
     enrich_cmd.set_defaults(func=run_enrich)
+
+    # ---------------------------
+    # heal
+    # ---------------------------
+    heal_cmd = subparsers.add_parser(
+        "heal", help="Fold a finished run's LLM fallbacks back into its automation"
+    )
+    heal_cmd.add_argument("automation", type=Path, help="the automation that was run")
+    heal_cmd.add_argument("logs", type=Path, help="that run's logs directory")
+    heal_cmd.add_argument("-o", "--out", type=Path)
+    heal_cmd.set_defaults(func=run_heal)
 
     args = parser.parse_args()
     args.func(args)
