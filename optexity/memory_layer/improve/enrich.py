@@ -2,11 +2,12 @@ import json
 import logging
 from pathlib import Path
 
+from browser_use.llm.base import BaseChatModel
 from browser_use.llm.messages import UserMessage
 from pydantic import ValidationError
 
 from optexity.schema.automation import Automation
-from optexity.schema.memory_layer import AutomationPatch, placeholder
+from optexity.schema.memory_layer import AutomationPatch, Trace, placeholder
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ The recorded steps, with what was measured about each:
 """
 
 
-def _trace_digest(trace) -> str:
+def _trace_digest(trace: Trace) -> str:
     """The evidence per compiled row, small enough to sit in a prompt."""
     rows = []
     for index, row in enumerate(trace.compiled_rows()):
@@ -120,7 +121,9 @@ def apply_patch(automation: Automation, patch: AutomationPatch) -> Automation:
     return Automation.model_validate(payload)
 
 
-async def enrich(automation: Automation, trace, llm, objective: str = "") -> Automation:
+async def enrich(
+    automation: Automation, trace: Trace, llm: BaseChatModel, objective: str = ""
+) -> Automation:
     """Ask the model for a patch, apply it, and keep it only if it validates.
 
     Retries with the validation error fed back, which is what makes pydantic the
@@ -159,7 +162,7 @@ async def enrich(automation: Automation, trace, llm, objective: str = "") -> Aut
     return automation
 
 
-async def _ask(llm, message: str) -> str:
+async def _ask(llm: BaseChatModel, message: str) -> str:
     response = await llm.ainvoke([UserMessage(content=message)])
     return _strip_fence(response.completion)
 
@@ -171,7 +174,12 @@ def _strip_fence(text: str) -> str:
     return text.strip()
 
 
-def print_enrichment(automation, enriched, history_path, out_path) -> None:
+def print_enrichment(
+    automation: Automation,
+    enriched: Automation,
+    history_path: Path,
+    out_path: Path,
+) -> None:
     print(f"\n{history_path}  ->  {out_path}")
     print(f"  parameters : {list(automation.parameters.input_parameters)}")
     print(f"            -> {list(enriched.parameters.input_parameters)}")
