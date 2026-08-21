@@ -13,7 +13,12 @@ from optexity.memory_layer.verify.effects import (
 )
 from optexity.memory_layer.verify.measure import choose_command, probe_row
 from optexity.memory_layer.verify.verdicts import locator_action
-from optexity.schema.memory_layer import NodeVerdict, Trace, VerificationReport
+from optexity.schema.memory_layer import (
+    NodeVerdict,
+    RunSignals,
+    Trace,
+    VerificationReport,
+)
 
 
 async def verify_automation(
@@ -113,15 +118,13 @@ async def verify_automation(
         )
 
     report.final_url = await browser.get_current_page_url()
-    report.signals = {
-        "nodes": len(automation.nodes),
-        "verified": report.verified_count,
-        "llm_tokens": await total_llm_tokens(task, memory),
-        "downloaded_files": [
+    report.signals = RunSignals(
+        llm_tokens=await total_llm_tokens(task, memory),
+        downloaded_files=[
             verdict.downloaded for verdict in report.verdicts if verdict.downloaded
         ],
-        "output_data": [
+        output_data=[
             entry.model_dump(mode="json") for entry in memory.variables.output_data
         ],
-    }
+    )
     return report

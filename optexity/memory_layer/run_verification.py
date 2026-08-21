@@ -8,13 +8,19 @@ from optexity.memory_layer.distill.compiler import distill
 from optexity.memory_layer.verify.session import make_build_session, missing_parameters
 from optexity.memory_layer.verify.verdicts import apply_verdicts
 from optexity.memory_layer.verify.walk import verify_automation
+from optexity.schema.automation import Automation
+from optexity.schema.memory_layer import Trace, VerificationReport
 
 logger = logging.getLogger(__name__)
 
 
-async def run(history_path: Path, url: str | None, headless: bool, port: int) -> dict:
-    automation, trace = distill(history_path, url)
+def compile_for_run(history_path: Path, url: str | None) -> tuple[Automation, Trace]:
+    """Distil, and refuse a run that would measure an error page.
 
+    An empty password makes every later node measure the login form it never got
+    past, turning one missing value into a page of fabricated verdicts.
+    """
+    automation, trace = distill(history_path, url)
     unset = missing_parameters(automation)
     if unset:
         raise SystemExit(
@@ -22,6 +28,13 @@ async def run(history_path: Path, url: str | None, headless: bool, port: int) ->
             + ", ".join(unset)
             + ". Supply them (they were redacted at capture) and re-run."
         )
+    return automation, trace
+
+
+async def run_verification(
+    history_path: Path, url: str | None, headless: bool, port: int
+) -> tuple[Automation, Trace, VerificationReport, float]:
+    automation, trace = compile_for_run(history_path, url)
 
     build_session = make_build_session(headless, port)
     task, memory, browser, teardown = await build_session(
@@ -38,12 +51,7 @@ async def run(history_path: Path, url: str | None, headless: bool, port: int) ->
         await teardown()
 
     apply_verdicts(automation, report)
-    return {
-        "trace": trace,
-        "automation": automation,
-        "report": report,
-        "seconds": seconds,
-    }
+    return automation, trace, report, seconds
 
 
 def print_report(report, trace, seconds: float) -> None:
@@ -57,7 +65,7 @@ def print_report(report, trace, seconds: float) -> None:
         if verdict.command:
             print(f"                {verdict.command}")
     print(f"\n  final url: {report.final_url}")
-    for key, value in report.signals.items():
+    for key, value in report.signals.model_dump().items():
         print(f"  {key}: {value}")
 
     # Both clocks exclude browser startup. The walk's also covers probing, which
@@ -68,7 +76,7 @@ def print_report(report, trace, seconds: float) -> None:
         (
             "llm tokens",
             trace.agentic_tokens or "unrecorded",
-            report.signals["llm_tokens"],
+            report.signals.llm_tokens,
         ),
         ("seconds", round(trace.agentic_seconds, 1), round(seconds, 1)),
     ):

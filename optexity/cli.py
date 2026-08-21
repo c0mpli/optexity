@@ -59,15 +59,15 @@ def run_distill(args: argparse.Namespace) -> None:
 def run_verify(args: argparse.Namespace) -> None:
     import asyncio
 
-    from optexity.memory_layer.runner import print_report, run
+    from optexity.memory_layer.run_verification import print_report, run_verification
 
-    result = asyncio.run(run(args.history, args.url, args.headless, args.port))
-    print_report(result["report"], result["trace"], result["seconds"])
+    automation, trace, report, seconds = asyncio.run(
+        run_verification(args.history, args.url, args.headless, args.port)
+    )
+    print_report(report, trace, seconds)
     if args.out:
-        args.out.write_text(
-            result["automation"].model_dump_json(indent=2, exclude_none=True)
-        )
-    if not result["report"].complete:
+        args.out.write_text(automation.model_dump_json(indent=2, exclude_none=True))
+    if not report.complete:
         sys.exit(1)
 
 
