@@ -169,9 +169,10 @@ def _fold_enter_into_preceding_input(trace: Trace) -> None:
 def _mark_superseded_interactions(trace: Trace) -> None:
     """Of a run of identical consecutive actions, only the last had any effect.
 
-    fill replaces contents; navigating to one url twice is idempotent. Element
-    identity comes from element_hash, which cannot find an element on a page but
-    can tell two recorded rows apart."""
+    fill replaces contents; navigating to one url twice is idempotent. Clicks are
+    neither -- two on a checkbox cancel out, two on a stepper count twice -- so a
+    repeated click is left alone. Element identity comes from element_hash, which
+    cannot find an element on a page but can tell two recorded rows apart."""
     deterministic = trace.deterministic_rows()
     for row, following in zip(deterministic, deterministic[1:], strict=False):
         if row.action != following.action:
@@ -179,7 +180,7 @@ def _mark_superseded_interactions(trace: Trace) -> None:
         if row.action == "navigate":
             if row.params.get("url") != following.params.get("url"):
                 continue
-        elif row.action in {"input", "click"}:
+        elif row.action == "input":
             if row.element is None:
                 continue
             if not row.element.is_same_element_as(following.element):

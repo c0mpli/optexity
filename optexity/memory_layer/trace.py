@@ -107,6 +107,16 @@ class Trace(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
     rows: list[TraceRow] = Field(default_factory=list)
 
+    @property
+    def agentic_tokens(self) -> int:
+        """What the agent spent working the objective out: the cost to beat."""
+        return int(self.usage.get("total_tokens") or 0)
+
+    @property
+    def agentic_seconds(self) -> float:
+        """Only the steps' own durations, so it excludes browser startup."""
+        return sum(row.step_duration_seconds or 0.0 for row in self.rows)
+
     def deterministic_rows(self) -> list[TraceRow]:
         return [row for row in self.rows if row.classification == "deterministic"]
 
