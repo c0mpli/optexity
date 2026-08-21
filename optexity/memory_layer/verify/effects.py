@@ -1,9 +1,14 @@
 import asyncio
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from optexity.schema.automation import ActionNode
 from optexity.schema.memory_layer import TraceRow
+
+if TYPE_CHECKING:
+    from optexity.inference.infra.browser import Browser
 
 # otherwise be judged inert.
 NAVIGATION_TIMEOUT_SECONDS = 10.0
@@ -12,14 +17,14 @@ NAVIGATING_ACTIONS = {"navigate", "go_back", "click"}
 DOWNLOAD_SETTLE_SECONDS = 10.0
 
 
-def files_in_downloads_dir(browser) -> set[str]:
+def files_in_downloads_dir(browser: "Browser") -> set[str]:
     directory = Path(browser.temp_downloads_dir)
     return (
         {entry.name for entry in directory.iterdir()} if directory.is_dir() else set()
     )
 
 
-async def wait_for_download(browser, before: set[str]) -> str | None:
+async def wait_for_download(browser: "Browser", before: set[str]) -> str | None:
     """The file a node produced, if it produced one.
 
     Chrome's download path is set browser-wide, so a file arrives whether or not
@@ -50,7 +55,9 @@ def same_page(left: str | None, right: str | None) -> bool:
     )
 
 
-async def wait_for_navigation(browser, from_url: str | None, timeout: float) -> None:
+async def wait_for_navigation(
+    browser: "Browser", from_url: str | None, timeout: float
+) -> None:
     """click_locator runs with no_wait_after and sleep_for_page_to_load's
     wait_for_load_state returns at once on the already-loaded old page, so a
     navigation the node triggered is still in flight when it returns.
@@ -63,7 +70,7 @@ async def wait_for_navigation(browser, from_url: str | None, timeout: float) -> 
 
 
 async def observe_effect(
-    row: TraceRow, node, browser, before_url: str | None
+    row: TraceRow, node: ActionNode, browser: "Browser", before_url: str | None
 ) -> tuple[bool, str]:
     """Whether the node that just ran actually changed anything.
 

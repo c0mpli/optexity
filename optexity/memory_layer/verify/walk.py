@@ -1,4 +1,5 @@
 import asyncio
+from typing import TYPE_CHECKING
 
 from optexity.memory_layer.capture import total_llm_tokens
 from optexity.memory_layer.verify.effects import (
@@ -13,6 +14,8 @@ from optexity.memory_layer.verify.effects import (
 )
 from optexity.memory_layer.verify.measure import choose_command, probe_row
 from optexity.memory_layer.verify.verdicts import locator_action
+from optexity.schema.automation import Automation
+from optexity.schema.memory import Memory
 from optexity.schema.memory_layer import (
     Classification,
     NodeVerdict,
@@ -21,10 +24,18 @@ from optexity.schema.memory_layer import (
     VerdictStatus,
     VerificationReport,
 )
+from optexity.schema.task import Task
+
+if TYPE_CHECKING:
+    from optexity.inference.infra.browser import Browser
 
 
 async def verify_automation(
-    trace: Trace, automation, task, memory, browser
+    trace: Trace,
+    automation: Automation,
+    task: Task,
+    memory: Memory,
+    browser: "Browser",
 ) -> VerificationReport:
     """Walk the compiled nodes, measuring each locator against the live page.
 
