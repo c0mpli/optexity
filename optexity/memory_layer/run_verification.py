@@ -64,7 +64,7 @@ async def run_improvement(
     )
 
 
-def print_report(report, trace, seconds: float) -> None:
+def print_report(report: VerificationReport, trace: Trace, seconds: float) -> None:
     print(f"\n{report.url}")
     print(f"  verified {report.verified_count}/{len(report.verdicts)} nodes")
     if report.stopped_at is not None:
