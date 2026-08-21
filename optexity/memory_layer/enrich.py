@@ -1,3 +1,5 @@
+import argparse
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -5,6 +7,8 @@ from pathlib import Path
 from browser_use.llm.messages import UserMessage
 from pydantic import BaseModel, Field, ValidationError
 
+from optexity.inference.models.chat_litellm import build_agent_llm
+from optexity.memory_layer.distill import distill
 from optexity.memory_layer.trace import placeholder
 from optexity.schema.automation import Automation
 
@@ -185,3 +189,49 @@ def _strip_fence(text: str) -> str:
     if text.startswith("```"):
         text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
     return text.strip()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m optexity.memory_layer.enrich",
+        description="Enrich a compiled automation with an LLM, without letting it "
+        "author selectors.",
+    )
+    parser.add_argument("history", type=Path, help="path to agent_history.json")
+    parser.add_argument("-o", "--out", type=Path, required=True)
+    parser.add_argument("--url")
+    parser.add_argument("--objective", default="", help="the original agentic task")
+    parser.add_argument("--model", help="litellm model string; defaults to LLM_MODEL")
+    args = parser.parse_args(argv)
+
+    # optexity/__init__ already called basicConfig, so set the level directly --
+    # enrich reports whether a patch applied only through logging.
+    logging.getLogger("optexity").setLevel(logging.INFO)
+    if not args.history.exists():
+        parser.error(f"no such file: {args.history}")
+
+    automation, trace = distill(args.history, args.url)
+    enriched = asyncio.run(
+        enrich(automation, trace, build_agent_llm(args.model), args.objective)
+    )
+    args.out.write_text(enriched.model_dump_json(indent=2, exclude_none=True))
+
+    before = automation.parameters.input_parameters
+    after = enriched.parameters.input_parameters
+    print(f"\n{args.history}  ->  {args.out}")
+    print(f"  parameters : {list(before)}")
+    print(f"            -> {list(after)}")
+    print()
+    for index, (old_node, new_node) in enumerate(
+        zip(automation.nodes, enriched.nodes, strict=True)
+    ):
+        old_task = getattr(old_node.interaction_action.agentic_task, "task", None)
+        new_task = getattr(new_node.interaction_action.agentic_task, "task", None)
+        if old_task != new_task:
+            print(f"  node {index} task : {old_task!r}\n              -> {new_task!r}")
+    print()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
