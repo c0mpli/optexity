@@ -20,17 +20,14 @@ SUMMED_USAGE_FIELDS = (
 )
 
 
-def save_agent_history(agent: Agent, task: Task, step_index: int) -> Path | None:
+def save_agent_history(agent: Agent, task: Task, step_index: int) -> None:
     """Never raises: a capture failure must not fail an otherwise successful node."""
-    agent_history_path = (
-        task.logs_directory / f"step_{step_index}" / AGENT_HISTORY_FILENAME
-    )
     try:
-        agent.save_history(agent_history_path)
-        return agent_history_path
+        agent.save_history(
+            task.logs_directory / f"step_{step_index}" / AGENT_HISTORY_FILENAME
+        )
     except Exception as e:
         logger.warning(f"Could not save agent history: {e}")
-        return None
 
 
 async def summarize_token_usage(logs_directory: str | Path) -> dict[str, Any]:

@@ -212,8 +212,6 @@ def _mark_superseded_interactions(trace: Trace) -> None:
         if row.action != following.action:
             continue
         if row.action == "navigate":
-            # Loading one url twice running is idempotent, so only the last of
-            # a run has effect. An agent that loses its way emits long runs.
             if row.params.get("url") != following.params.get("url"):
                 continue
         elif row.action in {"input", "click"}:

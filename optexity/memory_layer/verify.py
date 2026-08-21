@@ -14,7 +14,7 @@ from optexity.memory_layer.trace import (
     Trace,
     TraceRow,
     by_stability,
-    unique_candidates,
+    verified_candidates,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ NAVIGATING_ACTIONS = {"navigate", "go_back", "click"}
 DOWNLOAD_SETTLE_SECONDS = 10.0
 
 
-def downloads_present(browser) -> set[str]:
+def files_in_downloads_dir(browser) -> set[str]:
     directory = Path(browser.temp_downloads_dir)
     return (
         {entry.name for entry in directory.iterdir()} if directory.is_dir() else set()
@@ -48,12 +48,12 @@ async def wait_for_download(browser, before: set[str]) -> str | None:
     the node declared expect_download -- which is what lets this be measured
     rather than guessed from the href.
     """
-    if not downloads_present(browser) - before:
+    if not files_in_downloads_dir(browser) - before:
         return None
 
     deadline = time.monotonic() + DOWNLOAD_SETTLE_SECONDS
     while time.monotonic() < deadline:
-        arrived = downloads_present(browser) - before
+        arrived = files_in_downloads_dir(browser) - before
         done = sorted(n for n in arrived if not n.endswith((".crdownload", ".tmp")))
         if done:
             return done[0]
@@ -83,8 +83,6 @@ class NodeVerdict(BaseModel):
     command: str | None = None
     reason: str = ""
     downloaded: str | None = None
-    probes_run: int = 0
-    probe_seconds: float = 0.0
 
 
 class VerificationReport(BaseModel):
@@ -132,10 +130,9 @@ async def probe(command: str, browser) -> int | None:
         return None
 
 
-async def probe_row(row: TraceRow, browser) -> tuple[int, float]:
+async def probe_row(row: TraceRow, browser) -> None:
     """Bounded twice: every probe costs a second of an authenticated session."""
     started = time.monotonic()
-    probes_run = 0
     verified = 0
 
     for candidate in sorted(row.candidates, key=by_stability, reverse=True):
@@ -143,18 +140,14 @@ async def probe_row(row: TraceRow, browser) -> tuple[int, float]:
             break
         if time.monotonic() - started > PROBE_BUDGET_SECONDS:
             break
-
         candidate.match_count = await probe(candidate.command, browser)
-        probes_run += 1
         if candidate.matches_exactly_one_element:
             verified += 1
 
-    return probes_run, round(time.monotonic() - started, 2)
-
 
 async def choose_command(row: TraceRow, browser) -> tuple[str | None, str]:
-    unique = unique_candidates(row.candidates)
-    if not unique:
+    verified = verified_candidates(row.candidates)
+    if not verified:
         measured = sum(
             1 for candidate in row.candidates if candidate.match_count is not None
         )
@@ -162,7 +155,7 @@ async def choose_command(row: TraceRow, browser) -> tuple[str | None, str]:
             return None, "no candidate could be measured"
         return None, f"no candidate matched exactly one element ({measured} probed)"
 
-    best = unique[0]
+    best = verified[0]
     # Probing can demote the top candidate and leave only a far weaker one
     # unique; shipping that is the guess this layer exists to avoid.
     if best.stability_score < MINIMUM_STABILITY_SCORE:
@@ -200,7 +193,7 @@ async def wait_for_navigation(browser, from_url: str | None, timeout: float) -> 
         await asyncio.sleep(0.1)
 
 
-async def acted(
+async def observe_effect(
     row: TraceRow, node, browser, before_url: str | None
 ) -> tuple[bool, str]:
     """Whether the node that just ran actually changed anything.
@@ -224,9 +217,8 @@ async def acted(
         return False, f"still on {after_url}"
 
     if row.action == "input":
-        interaction = node.interaction_action
-        action = getattr(interaction, "input_text", None)
-        command = getattr(action, "command", None)
+        action = getattr(node.interaction_action, "input_text", None)
+        command = action.command if action else None
         if not command:
             return False, "no command to read back"
         try:
@@ -234,7 +226,7 @@ async def acted(
             value = await locator.input_value()
         except Exception as e:
             return False, f"could not read the field back ({e})"
-        expected = str(getattr(action, "input_text", ""))
+        expected = str(action.input_text)
         if value == expected:
             return True, "field holds the value written"
         return False, f"field holds {value!r}, expected {expected!r}"
@@ -244,25 +236,14 @@ async def acted(
 
 def locator_action(node):
     """The node's interaction that carries a command, if it has one."""
-    interaction = node.interaction_action
-    if interaction is None:
-        return None
     for field in LOCATOR_FIELDS:
-        action = getattr(interaction, field, None)
+        action = getattr(node.interaction_action, field, None)
         if action is not None:
             return action
     return None
 
 
-def _set_command(node, command: str) -> bool:
-    action = locator_action(node)
-    if action is None:
-        return False
-    action.command = command
-    return True
-
-
-def apply_verdicts(automation, report: VerificationReport) -> int:
+def apply_verdicts(automation, report: VerificationReport) -> None:
     """Copy measured commands onto the automation the caller keeps.
 
     The walk drives a throwaway copy — replace_variables consumes parameter
@@ -276,16 +257,15 @@ def apply_verdicts(automation, report: VerificationReport) -> int:
         1 for verdict in report.verdicts if verdict.downloaded
     )
 
-    applied = 0
     for verdict, node in zip(report.verdicts, automation.nodes, strict=False):
-        if verdict.command and _set_command(node, verdict.command):
-            applied += 1
+        action = locator_action(node)
+        if verdict.command and action is not None:
+            action.command = verdict.command
         # Only click carries these; a misaligned verdict must not raise here.
         click = getattr(node.interaction_action, "click_element", None)
         if verdict.downloaded and click is not None:
             click.expect_download = True
             click.download_filename = verdict.downloaded
-    return applied
 
 
 async def verify_walk(
@@ -324,10 +304,11 @@ async def verify_walk(
 
         agentic = getattr(node.interaction_action, "agentic_task", None) is not None
 
-        if locator_action(node) is not None:
-            verdict.probes_run, verdict.probe_seconds = await probe_row(row, browser)
+        action = locator_action(node)
+        if action is not None:
+            await probe_row(row, browser)
             command, reason = await choose_command(row, browser)
-            if command is None or not _set_command(node, command):
+            if command is None:
                 # Distillation deletes the agent's detours, so reaching an
                 # element from a different page than the recording is normal.
                 if row.url_before and not same_page(live_url, row.url_before):
@@ -341,11 +322,12 @@ async def verify_walk(
                     "no measured locator for this row, so the path breaks here"
                 )
                 break
+            action.command = command
             verdict.reason = reason
             verdict.command = command
 
         before_url = await browser.get_current_page_url()
-        downloads_before = downloads_present(browser)
+        downloads_before = files_in_downloads_dir(browser)
         await run_action_node(node, task, memory, browser)
         if row.action in NAVIGATING_ACTIONS:
             await wait_for_navigation(
@@ -361,7 +343,7 @@ async def verify_walk(
         if row.action == "click":
             verdict.downloaded = await wait_for_download(browser, downloads_before)
 
-        effective, evidence = await acted(row, node, browser, before_url)
+        effective, evidence = await observe_effect(row, node, browser, before_url)
         if not effective:
             verdict.status = VerdictStatus.UNMEASURED
             verdict.reason = f"{verdict.reason}; no observable effect ({evidence})"

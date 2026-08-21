@@ -89,7 +89,7 @@ class Candidate(BaseModel):
         return self.match_count is None
 
 
-def unique_candidates(candidates: list[Candidate]) -> list[Candidate]:
+def verified_candidates(candidates: list[Candidate]) -> list[Candidate]:
     """Probed at exactly one match, most stable first."""
     return sorted(
         (
@@ -123,9 +123,9 @@ class TraceRow(BaseModel):
 
     @property
     def best_candidate(self) -> Candidate | None:
-        unique = unique_candidates(self.candidates)
-        if unique:
-            return unique[0]
+        verified = verified_candidates(self.candidates)
+        if verified:
+            return verified[0]
         unprobed = [candidate for candidate in self.candidates if candidate.is_unprobed]
         return max(unprobed, key=by_stability) if unprobed else None
 
