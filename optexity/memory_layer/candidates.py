@@ -112,7 +112,7 @@ class _RecordedElementAsNode:
 def _is_parseable(command: str) -> bool:
     """Checks the decoded selector, not the command text: the command carries a
     layer of Python escaping that eval strips before the css engine sees it."""
-    quoted = re.match(r'^locator\((".*")\)$', command, re.DOTALL)
+    quoted = re.match(r'^locator\(("(?:[^"\\]|\\.)*")[,)]', command)
     if not quoted:
         return True
     try:

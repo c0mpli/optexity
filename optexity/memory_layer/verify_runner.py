@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import time
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -91,7 +92,9 @@ async def run(history_path: Path, url: str | None, headless: bool, port: int) ->
         await browser.go_to_url(automation.url, retry_count=3)
 
         # run_action_node substitutes in place; the caller keeps the original.
+        started = time.monotonic()
         report = await verify_walk(trace, deepcopy(automation), task, memory, browser)
+        seconds = time.monotonic() - started
     finally:
         if browser is not None:
             try:
@@ -104,10 +107,15 @@ async def run(history_path: Path, url: str | None, headless: bool, port: int) ->
             logger.warning(f"error stopping actual browser: {e}")
 
     apply_verdicts(automation, report)
-    return {"trace": trace, "automation": automation, "report": report}
+    return {
+        "trace": trace,
+        "automation": automation,
+        "report": report,
+        "seconds": seconds,
+    }
 
 
-def _print_report(report) -> None:
+def _print_report(report, trace, seconds: float) -> None:
     print(f"\n{report.url}")
     print(f"  verified {report.verified_count}/{len(report.verdicts)} nodes")
     if report.stopped_at is not None:
@@ -122,6 +130,16 @@ def _print_report(report) -> None:
     print(f"\n  final url: {report.final_url}")
     for key, value in report.signals.items():
         print(f"  {key}: {value}")
+
+    # Both clocks exclude browser startup. The walk's also covers probing, which
+    # a plain replay does not pay, so this reads as an upper bound on the cost.
+    print(f"\n  {'':<12}{'agentic':>10}{'verified':>10}")
+    for label, before, after in (
+        ("steps", len(trace.rows), len(report.verdicts)),
+        ("llm tokens", trace.agentic_tokens, report.signals["llm_tokens"]),
+        ("seconds", round(trace.agentic_seconds, 1), round(seconds, 1)),
+    ):
+        print(f"  {label:<12}{before:>10}{after:>10}")
     print()
 
 
@@ -145,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"no such file: {args.history}")
 
     result = asyncio.run(run(args.history, args.url, args.headless, args.port))
-    _print_report(result["report"])
+    _print_report(result["report"], result["trace"], result["seconds"])
 
     if args.out:
         args.out.write_text(

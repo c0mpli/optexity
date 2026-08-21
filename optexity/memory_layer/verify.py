@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field
 
 from optexity.memory_layer.candidates import MINIMUM_STABILITY_SCORE, propose_bundle
+from optexity.memory_layer.capture import total_llm_tokens
 from optexity.memory_layer.trace import (
     Classification,
     Trace,
@@ -375,7 +376,7 @@ async def verify_walk(
     report.signals = {
         "nodes": len(automation.nodes),
         "verified": report.verified_count,
-        "llm_tokens": memory.token_usage.total_tokens,
+        "llm_tokens": await total_llm_tokens(task, memory),
         "downloaded_files": [
             verdict.downloaded for verdict in report.verdicts if verdict.downloaded
         ],
