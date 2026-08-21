@@ -160,6 +160,20 @@ class Trace(BaseModel):
         return counts
 
 
+class CapturedUsage(BaseModel):
+    """browser-use's own accounting block, as save_history writes it.
+
+    Not optexity's TokenUsage: that counts different things under different
+    names. agentic_nodes is this layer's own addition when several are summed.
+    """
+
+    agentic_nodes: int = 0
+    entry_count: int = 0
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
+
+
 class VerdictStatus(StrEnum):
     """What the walk established about one node."""
 
@@ -178,7 +192,7 @@ class VerdictStatus(StrEnum):
 class NodeVerdict(BaseModel):
     step: int
     action: str
-    status: str  # verified | demoted | unmeasured | not_reached
+    status: VerdictStatus
     command: str | None = None
     reason: str = ""
     downloaded: str | None = None
@@ -202,7 +216,9 @@ class VerificationReport(BaseModel):
 
     @property
     def verified_count(self) -> int:
-        return sum(1 for verdict in self.verdicts if verdict.status == "verified")
+        return sum(
+            1 for verdict in self.verdicts if verdict.status == VerdictStatus.VERIFIED
+        )
 
     @property
     def complete(self) -> bool:
