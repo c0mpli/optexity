@@ -6,9 +6,10 @@ from copy import deepcopy
 
 from pydantic import BaseModel, Field
 
+from optexity.memory_layer.agent_history import load_trace
 from optexity.memory_layer.capture import AGENT_HISTORY_FILENAME, total_llm_tokens
 from optexity.memory_layer.distill import classify, trace_to_automation
-from optexity.memory_layer.trace import Classification, Trace, load_trace
+from optexity.memory_layer.trace import Classification, Trace
 from optexity.memory_layer.verify import (
     VerdictStatus,
     apply_verdicts,
