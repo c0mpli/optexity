@@ -7,7 +7,7 @@ from optexity.memory_layer.trace import (
     Candidate,
     Element,
     by_stability,
-    unique_candidates,
+    verified_candidates,
 )
 
 # _looks_dynamic discards names like RoboForm's 04fullname and sits on the live
@@ -35,7 +35,7 @@ UNSCORED_ATTRIBUTE_LOCATORS = {
 HREF_SCORE = 60
 
 GROUPED_INPUT_TYPES = {"radio", "checkbox"}
-VALUE_NARROWED_SCORE = 88
+NAME_VALUE_SCORE = 88
 
 XPATH_ANCHOR_TAGS = ("dialog", "form", "table", "nav", "main", "article", "section")
 ANCHORED_XPATH_SCORE = 15
@@ -67,7 +67,7 @@ MAX_BUNDLED_CANDIDATES = 2
 KIND_FAMILY_ALIASES = {"css+text": "css", "role+text": "text"}
 
 
-def implicit_role(element: Element) -> str:
+def computed_role(element: Element) -> str:
     explicit = (element.attributes.get("role") or "").strip()
     if explicit:
         return explicit
@@ -97,7 +97,7 @@ class _RecordedElementAsNode:
         self.tag_name = element.tag_name
         self.xpath = element.xpath
         accessible_name = (element.accessible_name or "").strip()
-        role = implicit_role(element)
+        role = computed_role(element)
         self.ax_node = (
             SimpleNamespace(role=role, name=accessible_name)
             if (role or accessible_name)
@@ -178,7 +178,7 @@ def _unscored_attribute_candidates(element: Element) -> list[Candidate]:
     return candidates
 
 
-def _value_narrowed_candidates(element: Element) -> list[Candidate]:
+def _name_value_candidates(element: Element) -> list[Candidate]:
     if (element.attributes.get("type") or "").lower() not in GROUPED_INPUT_TYPES:
         return []
     name = (element.attributes.get("name") or "").strip()
@@ -190,7 +190,7 @@ def _value_narrowed_candidates(element: Element) -> list[Candidate]:
         _locator_candidate(
             f"{selector}[value='{_escaped(value)}']",
             "name+value",
-            VALUE_NARROWED_SCORE,
+            NAME_VALUE_SCORE,
         )
     ]
 
@@ -215,8 +215,8 @@ def _anchored_xpath_candidates(element: Element) -> list[Candidate]:
 
 def _narrowed_candidates(candidates: list[Candidate]) -> list[Candidate]:
     narrowed = []
+    prefix, suffix = 'locator("', '")'
     for candidate in candidates:
-        prefix, suffix = 'locator("', '")'
         if not candidate.command.startswith(prefix):
             continue
         if not candidate.command.endswith(suffix):
@@ -243,7 +243,7 @@ def propose_bundle(candidates: list[Candidate]) -> Candidate | None:
     to persist a fallback. Returned UNPROBED and must be measured: or_() is a set
     union, so two legs each matching one element can match two together, and the
     family rule below makes that more likely by picking unrelated signals."""
-    verified = unique_candidates(candidates)
+    verified = verified_candidates(candidates)
     if len(verified) < 2:
         return None
 
@@ -282,7 +282,7 @@ def build_candidates(element: Element) -> list[Candidate]:
     for extra_candidate in (
         _readmitted_candidates(element)
         + _unscored_attribute_candidates(element)
-        + _value_narrowed_candidates(element)
+        + _name_value_candidates(element)
         + _anchored_xpath_candidates(element)
     ):
         if extra_candidate.command not in seen_commands:

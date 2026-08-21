@@ -35,14 +35,14 @@ class Element(BaseModel):
     stable_hash: int | None = None
     frame_id: str | None = None
 
-    def label(self, attributes: tuple[str, ...]) -> str:
+    def label(self, attribute_names: tuple[str, ...]) -> str:
         """The most human-readable handle this element offers, else empty."""
         accessible_name = (self.accessible_name or "").strip()
         return accessible_name or next(
             (
-                self.attributes[attribute]
-                for attribute in attributes
-                if self.attributes.get(attribute)
+                self.attributes[name]
+                for name in attribute_names
+                if self.attributes.get(name)
             ),
             "",
         )
@@ -89,7 +89,7 @@ class Candidate(BaseModel):
         return self.match_count is None
 
 
-def unique_candidates(candidates: list[Candidate]) -> list[Candidate]:
+def verified_candidates(candidates: list[Candidate]) -> list[Candidate]:
     """Probed at exactly one match, most stable first."""
     return sorted(
         (
@@ -123,9 +123,9 @@ class TraceRow(BaseModel):
 
     @property
     def best_candidate(self) -> Candidate | None:
-        unique = unique_candidates(self.candidates)
-        if unique:
-            return unique[0]
+        verified = verified_candidates(self.candidates)
+        if verified:
+            return verified[0]
         unprobed = [candidate for candidate in self.candidates if candidate.is_unprobed]
         return max(unprobed, key=by_stability) if unprobed else None
 

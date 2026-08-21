@@ -1,36 +1,8 @@
-"""Let an LLM improve a compiled automation, without letting it author selectors.
-
-The deterministic compiler already turns a trace into a valid Automation, and
-verification already measures every locator it commits to. So the useful
-question is not "can a model write the automation" — it is "which parts of the
-automation can only be written by something that understands the page".
-
-Three, and none of them is a selector:
-
-* ``prompt_instructions`` — the human-readable description of what a node does.
-  The compiler emits none, so a node has nothing to fall back on if
-  ``skip_prompt`` is ever turned off, and nothing a reviewer can read.
-* parameter names — the automation's public API. ``adr_city`` and ``fullname``
-  are what an attribute slug produces; ``city`` and ``full_name`` are what a
-  person would call them.
-* which recorded values are inputs at all. The compiler parameterises every
-  typed value, because guessing wrong in the other direction silently freezes a
-  value forever. A model can tell a country that never changes from a name that
-  always does.
-
-The model is therefore given the compiled automation and asked for a patch
-keyed by node index — never for the automation itself. That is not a guard
-bolted on afterwards; a patch has nowhere to put a ``command``, so the
-``eval(f"page.{command}")`` injection surface is closed by the shape of the
-request rather than by remembering to validate. The patch is applied to the
-already-valid automation and the result is re-validated, so a bad patch fails
-loudly instead of producing a plausible automation that does the wrong thing.
-"""
-
 import json
 import logging
 from pathlib import Path
 
+from browser_use.llm.messages import UserMessage
 from pydantic import BaseModel, Field, ValidationError
 
 from optexity.memory_layer.trace import placeholder
@@ -55,7 +27,9 @@ class NodePatch(BaseModel):
 
 
 class AutomationPatch(BaseModel):
-    """Everything the model is allowed to change. Notably absent: command."""
+    """Everything the model is allowed to change. Notably absent: command — with
+    nowhere in the patch to put one, the eval(f"page.{command}") surface in
+    browser.py stays closed by the shape of the request, not by validation."""
 
     rename_parameters: dict[str, str] = Field(default_factory=dict)
     constant_parameters: list[str] = Field(default_factory=list)
@@ -128,15 +102,24 @@ def apply_patch(automation: Automation, patch: AutomationPatch) -> Automation:
     payload = automation.model_dump(mode="json", exclude_none=True)
     parameters = payload.setdefault("parameters", {}).setdefault("input_parameters", {})
 
+    renames, inlined = [], {}
     for old_name, new_name in patch.rename_parameters.items():
         if old_name in parameters and new_name not in parameters:
             parameters[new_name] = parameters.pop(old_name)
-            _rewrite_references(payload, old_name, new_name)
-
+            renames.append((f"{{{old_name}[", f"{{{new_name}["))
     for name in patch.constant_parameters:
         current = patch.rename_parameters.get(name, name)
         if current in parameters:
-            _inline_parameter(payload, current, parameters.pop(current))
+            values = parameters.pop(current)
+            inlined[placeholder(current)] = str(values[0]) if values else ""
+
+    for node in payload.get("nodes", []):
+        for action in (node.get("interaction_action") or {}).values():
+            value = action.get("input_text") if isinstance(action, dict) else None
+            if isinstance(value, str):
+                for old, new in renames:
+                    value = value.replace(old, new)
+                action["input_text"] = inlined.get(value, value)
 
     for node_patch in patch.nodes:
         if not 0 <= node_patch.index < len(payload.get("nodes", [])):
@@ -151,25 +134,6 @@ def apply_patch(automation: Automation, patch: AutomationPatch) -> Automation:
                     action["prompt_instructions"] = node_patch.prompt_instructions
 
     return Automation.model_validate(payload)
-
-
-def _rewrite_references(payload: dict, old_name: str, new_name: str) -> None:
-    old, new = f"{{{old_name}[", f"{{{new_name}["
-    for node in payload.get("nodes", []):
-        for action in (node.get("interaction_action") or {}).values():
-            if isinstance(action, dict):
-                value = action.get("input_text")
-                if isinstance(value, str) and old in value:
-                    action["input_text"] = value.replace(old, new)
-
-
-def _inline_parameter(payload: dict, name: str, values: list) -> None:
-    reference = placeholder(name)
-    literal = str(values[0]) if values else ""
-    for node in payload.get("nodes", []):
-        for action in (node.get("interaction_action") or {}).values():
-            if isinstance(action, dict) and action.get("input_text") == reference:
-                action["input_text"] = literal
 
 
 async def enrich(automation: Automation, trace, llm, objective: str = "") -> Automation:
@@ -212,11 +176,8 @@ async def enrich(automation: Automation, trace, llm, objective: str = "") -> Aut
 
 
 async def _ask(llm, message: str) -> str:
-    from browser_use.llm.messages import UserMessage
-
     response = await llm.ainvoke([UserMessage(content=message)])
-    text = getattr(response, "completion", response)
-    return _strip_fence(text if isinstance(text, str) else str(text))
+    return _strip_fence(response.completion)
 
 
 def _strip_fence(text: str) -> str:
