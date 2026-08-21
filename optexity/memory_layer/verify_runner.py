@@ -11,6 +11,7 @@ from optexity.inference.infra.actual_browser import ActualBrowser
 from optexity.inference.infra.browser import Browser
 from optexity.inference.models import normalize_model
 from optexity.memory_layer.distill import distill
+from optexity.memory_layer.loop import format_table, improve
 from optexity.memory_layer.verify import apply_verdicts, verify_walk
 from optexity.schema.memory import Memory
 from optexity.schema.task import Task
@@ -50,7 +51,63 @@ def missing_parameters(automation) -> list[str]:
     ]
 
 
-async def run(history_path: Path, url: str | None, headless: bool, port: int) -> dict:
+def make_build_run(headless: bool, port: int):
+    """A factory the loop calls once per round for a fresh browser and task."""
+
+    async def build_run(label: str, automation):
+        task = build_task(automation)
+        memory = Memory(unique_child_arn=label)
+        memory.update_system_info()
+        memory.automation_state.step_index = -1
+        memory.automation_state.try_index = 0
+
+        actual_browser = ActualBrowser(
+            channel=automation.browser_channel,
+            unique_child_arn=label,
+            port=port,
+            headless=headless,
+            allow_cookies=automation.allow_cookies,
+        )
+        browser = None
+
+        async def teardown():
+            if browser is not None:
+                try:
+                    await asyncio.wait_for(browser.stop(), timeout=30)
+                except Exception as e:
+                    logger.warning(f"error stopping browser: {e}")
+            try:
+                await actual_browser.stop()
+            except Exception as e:
+                logger.warning(f"error stopping actual browser: {e}")
+
+        try:
+            await actual_browser.start()
+            if actual_browser.cdp_url is None:
+                raise RuntimeError("browser started but exposed no CDP url")
+            browser = Browser(
+                memory=memory,
+                cdp_url=str(actual_browser.cdp_url),
+                llm_model=normalize_model(task.llm_provider, task.llm_model_name),
+            )
+            await browser.start()
+            await browser.go_to_url("about:blank")
+            await browser.go_to_url(automation.url, retry_count=3)
+        except Exception:
+            await teardown()
+            raise
+        return task, memory, browser, teardown
+
+    return build_run
+
+
+async def run(
+    history_path: Path,
+    url: str | None,
+    headless: bool,
+    port: int,
+    rounds: int = 1,
+) -> dict:
     automation, trace = distill(history_path, url)
 
     unset = missing_parameters(automation)
@@ -61,47 +118,22 @@ async def run(history_path: Path, url: str | None, headless: bool, port: int) ->
             + ". Supply them (they were redacted at capture) and re-run."
         )
 
-    unique_child_arn = f"verify_{uuid.uuid4()}"
-    task = build_task(automation)
-    memory = Memory(unique_child_arn=unique_child_arn)
-    memory.update_system_info()
-    memory.automation_state.step_index = -1
-    memory.automation_state.try_index = 0
+    build_run = make_build_run(headless, port)
 
-    actual_browser = ActualBrowser(
-        channel=automation.browser_channel,
-        unique_child_arn=unique_child_arn,
-        port=port,
-        headless=headless,
-        allow_cookies=automation.allow_cookies,
-    )
-
-    browser = None
-    try:
-        await actual_browser.start()
-        if actual_browser.cdp_url is None:
-            raise RuntimeError("browser started but exposed no CDP url")
-        browser = Browser(
-            memory=memory,
-            cdp_url=str(actual_browser.cdp_url),
-            llm_model=normalize_model(task.llm_provider, task.llm_model_name),
+    if rounds > 1:
+        automation, trace, loop_result = await improve(
+            trace, automation, build_run, max_rounds=rounds
         )
-        await browser.start()
-        await browser.go_to_url("about:blank")
-        await browser.go_to_url(automation.url, retry_count=3)
+        return {"trace": trace, "automation": automation, "loop": loop_result}
 
+    task, memory, browser, teardown = await build_run(
+        f"verify_{uuid.uuid4()}", automation
+    )
+    try:
         # run_action_node substitutes in place; the caller keeps the original.
         report = await verify_walk(trace, deepcopy(automation), task, memory, browser)
     finally:
-        if browser is not None:
-            try:
-                await asyncio.wait_for(browser.stop(), timeout=30)
-            except Exception as e:
-                logger.warning(f"error stopping browser: {e}")
-        try:
-            await actual_browser.stop()
-        except Exception as e:
-            logger.warning(f"error stopping actual browser: {e}")
+        await teardown()
 
     apply_verdicts(automation, report)
     return {"trace": trace, "automation": automation, "report": report}
@@ -136,6 +168,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--url")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--port", type=int, default=9222)
+    parser.add_argument(
+        "--rounds",
+        type=int,
+        default=1,
+        help="replay this many times, learning from the agentic steps each round",
+    )
     args = parser.parse_args(argv)
 
     # optexity/__init__ already called basicConfig, so set levels directly.
@@ -144,8 +182,13 @@ def main(argv: list[str] | None = None) -> int:
     if not args.history.exists():
         parser.error(f"no such file: {args.history}")
 
-    result = asyncio.run(run(args.history, args.url, args.headless, args.port))
-    _print_report(result["report"])
+    result = asyncio.run(
+        run(args.history, args.url, args.headless, args.port, args.rounds)
+    )
+    if "loop" in result:
+        print(format_table(result["loop"]))
+    else:
+        _print_report(result["report"])
 
     if args.out:
         args.out.write_text(
@@ -153,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.trace_out:
         args.trace_out.write_text(result["trace"].model_dump_json(indent=2))
+    if "loop" in result:
+        return 0 if result["loop"].converged else 1
     return 0 if result["report"].complete else 1
 
 
