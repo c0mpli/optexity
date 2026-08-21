@@ -3,7 +3,7 @@ import re
 from types import SimpleNamespace
 
 from optexity.inference.core.interaction.utils import LocatorExtraction
-from optexity.memory_layer.trace import Candidate, Element, by_stability
+from optexity.schema.memory_layer import Candidate, Element, by_stability
 
 # _looks_dynamic discards names like RoboForm's 04fullname and sits on the live
 # LLM-fallback path, so rather than change it those are re-admitted a rung lower.
