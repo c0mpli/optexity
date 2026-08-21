@@ -14,6 +14,8 @@ from optexity.schema.memory_layer import (
     HealReport,
     NodeGrowth,
     NodeHeal,
+    RecordedLocator,
+    by_score,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,7 +46,7 @@ def command_from_recorded(expression: str) -> str | None:
     return locator[len("page.") :] if locator.startswith("page.") else None
 
 
-def rescued_locators(step_directory: Path) -> list[dict]:
+def rescued_locators(step_directory: Path) -> list[RecordedLocator]:
     """What the LLM fallback found, or nothing if this node never needed it.
 
     log_interacted_locator runs only from the index-based path, which the handlers
@@ -54,24 +56,24 @@ def rescued_locators(step_directory: Path) -> list[dict]:
     if not path.is_file():
         return []
     try:
-        return json.loads(path.read_text())
+        recorded = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as e:
         logger.warning(f"could not read {path}: {e}")
         return []
+    return [RecordedLocator.model_validate(entry) for entry in recorded]
 
 
-def best_command(candidates: list[dict]) -> tuple[str, str, int] | None:
-    for candidate in sorted(
-        candidates, key=lambda c: c.get("score") or 0, reverse=True
-    ):
-        score = candidate.get("score") or 0
-        if score < MINIMUM_STABILITY_SCORE:
+def best_command(
+    candidates: list[RecordedLocator],
+) -> tuple[str, RecordedLocator] | None:
+    for candidate in sorted(candidates, key=by_score, reverse=True):
+        if candidate.score < MINIMUM_STABILITY_SCORE:
             # Below this the recording is a positional xpath or bare text, which
             # is how the command being healed drifted in the first place.
             return None
-        command = command_from_recorded(candidate.get("locator") or "")
+        command = command_from_recorded(candidate.locator)
         if command:
-            return command, candidate.get("kind") or "", score
+            return command, candidate
     return None
 
 
@@ -150,13 +152,17 @@ def heal(automation: Automation, logs_directory: str | Path) -> HealReport:
         if chosen is None:
             logger.info(f"node {position}: rescued, but nothing stable enough to keep")
             continue
-        command, kind, score = chosen
+        command, recorded = chosen
         if command == action.command:
             continue
 
         report.heals.append(
             NodeHeal(
-                node=position, was=action.command, now=command, kind=kind, score=score
+                node=position,
+                was=action.command,
+                now=command,
+                kind=recorded.kind,
+                score=recorded.score,
             )
         )
         action.command = command

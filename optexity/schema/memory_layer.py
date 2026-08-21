@@ -17,6 +17,7 @@ class Classification(StrEnum):
 
 
 by_stability = attrgetter("stability_score")
+by_score = attrgetter("score")
 
 
 def placeholder(parameter_name: str) -> str:
@@ -238,6 +239,19 @@ class LoopResult(BaseModel):
     rounds: list[RoundResult] = Field(default_factory=list)
     converged: bool = False
     stopped_because: str = ""
+
+
+class RecordedLocator(BaseModel):
+    """One entry of step_N/locator_candidates.json.
+
+    log_interacted_locator writes page.<locator><method> for a human to paste
+    into a console, so `locator` is not a command until the prefix and the
+    trailing call come off.
+    """
+
+    locator: str = ""
+    kind: str = ""
+    score: int = 0
 
 
 class NodeHeal(BaseModel):
