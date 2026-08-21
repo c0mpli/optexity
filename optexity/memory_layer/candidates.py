@@ -3,12 +3,7 @@ import re
 from types import SimpleNamespace
 
 from optexity.inference.core.interaction.utils import LocatorExtraction
-from optexity.memory_layer.trace import (
-    Candidate,
-    Element,
-    by_stability,
-    verified_candidates,
-)
+from optexity.memory_layer.trace import Candidate, Element, by_stability
 
 # _looks_dynamic discards names like RoboForm's 04fullname and sits on the live
 # LLM-fallback path, so rather than change it those are re-admitted a rung lower.
@@ -66,11 +61,6 @@ ROLE_BY_INPUT_TYPE = {
 
 NARROWINGS = (":not([type='hidden'])", ":visible")
 NARROWING_PENALTY = 5
-
-# or_() is a union, so bundling is only unambiguous if each leg was separately
-# measured at exactly one match.
-MAX_BUNDLED_CANDIDATES = 2
-KIND_FAMILY_ALIASES = {"css+text": "css", "role+text": "text"}
 
 
 def computed_role(element: Element) -> str:
@@ -255,37 +245,6 @@ def _narrowed_candidates(candidates: list[Candidate]) -> list[Candidate]:
                 )
             )
     return narrowed
-
-
-def propose_bundle(candidates: list[Candidate]) -> Candidate | None:
-    """The schema stores one command per node, so an or_() chain is the only way
-    to persist a fallback. Returned UNPROBED and must be measured: or_() is a set
-    union, so two legs each matching one element can match two together, and the
-    family rule below makes that more likely by picking unrelated signals."""
-    verified = verified_candidates(candidates)
-    if len(verified) < 2:
-        return None
-
-    # A differently-derived leg, not a variant that breaks on the same change.
-    legs: list[Candidate] = []
-    families: set[str] = set()
-    for candidate in verified:
-        family = candidate.kind.split(" +")[0].split(" (")[0]
-        family = KIND_FAMILY_ALIASES.get(family, family)
-        if family in families:
-            continue
-        families.add(family)
-        legs.append(candidate)
-        if len(legs) == MAX_BUNDLED_CANDIDATES:
-            break
-
-    if len(legs) < 2:
-        return None
-    return Candidate(
-        command=legs[0].command + f".or_(page.{legs[1].command})",
-        kind=f"{legs[0].kind} or {legs[1].kind}",
-        stability_score=legs[0].stability_score,
-    )
 
 
 def build_candidates(element: Element) -> list[Candidate]:
