@@ -90,8 +90,11 @@ def _declare_parameter(
     redacted = SECRET_PLACEHOLDER.match(value)
     name = redacted.group(1) if redacted else _parameter_name_for(row, already_used)
     already_used.add(name)
-    # Redacted at capture: declare the parameter, leave it empty.
-    parameters[name] = [""] if redacted else [value]
+    # Declared, never written down. Not secure_parameters: that holds vault
+    # references, and a recording has none to emit.
+    element = row.element
+    is_password = bool(element) and element.attributes.get("type") == "password"
+    parameters[name] = [""] if redacted or is_password else [value]
     return placeholder(name)
 
 

@@ -19,8 +19,8 @@ capture ──▶ distill ──▶ verify      run ──▶ did a node fall ba
    │           └─ deterministic / redundant / non-deterministic
    └─ saves the AgentHistoryList every caller used to discard
               │
-              ├──▶ enrich   (Bonus A)
-              └──▶ loop     (Bonus B)
+              ├──▶ enrich
+              └──▶ loop
 ```
 
 | file | does |
@@ -48,6 +48,12 @@ That fixture is a real captured run, committed so the pipeline is runnable from 
 clean checkout. It prints the classification of every recorded action and writes a
 deterministic `Automation`.
 
+`automations/the_internet_agent_history.json` is the multi-page one — login,
+secure area, file download — which distils 18 recorded actions to 7 deterministic
+nodes. Its `password` parameter comes out empty: a value typed into a
+`type="password"` field is declared and never written down, so supply it
+(`SuperSecretPassword!`, published on the site's own login page) to run it.
+
 Measuring the result against the live page needs a browser:
 
 ```bash
@@ -60,12 +66,12 @@ effect — a url change, a value on the page, a downloaded file. A node that run
 without evidence it acted stops the walk rather than being recorded as a pass. The
 report ends with the agentic run's cost next to the measured one.
 
-`--rounds N` runs the Bonus B loop instead: each round replays, re-distils the
+`--rounds N` runs the loop instead: each round replays, re-distils the
 steps that still needed the agent, and recompiles. It stops when every step is
 deterministic, when a round verifies fewer nodes than the last, when the walk
 stops on a node it cannot measure, or when a round learns nothing new.
 
-Bonus A is a separate step, since an LLM is optional to the pipeline:
+Enrichment is a separate step, since an LLM is optional to the pipeline:
 
 ```bash
 python -m optexity.memory_layer.enrich \
