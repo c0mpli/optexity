@@ -5,6 +5,7 @@ from browser_use import Agent, BrowserSession, Tools
 from optexity.inference.infra.browser import Browser
 from optexity.inference.models import normalize_model
 from optexity.inference.models.chat_litellm import build_agent_llm
+from optexity.memory_layer.capture import save_agent_history
 from optexity.schema.actions.interaction_action import (
     AgenticTask,
     CloseOverlayPopupAction,
@@ -71,6 +72,10 @@ async def handle_agentic_task(
         logger.debug(f"Finally running agentic task on browser_use {browser.cdp_url} ")
         history = await agent.run(max_steps=agentic_task_action.max_steps)
         logger.debug(f"Agentic task completed on browser_use {browser.cdp_url} ")
+
+        # Popup closers reuse this path and would overwrite the node's capture.
+        if not isinstance(agentic_task_action, CloseOverlayPopupAction):
+            save_agent_history(agent, task, memory.automation_state.step_index)
 
         agent.stop()
         if agent.browser_session:

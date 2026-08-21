@@ -1,0 +1,56 @@
+import json
+import logging
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+import aiofiles
+from browser_use import Agent
+
+from optexity.schema.task import Task
+
+logger = logging.getLogger(__name__)
+
+AGENT_HISTORY_FILENAME = "agent_history.json"
+SUMMED_USAGE_FIELDS = (
+    "entry_count",
+    "total_prompt_tokens",
+    "total_completion_tokens",
+    "total_tokens",
+)
+
+
+def save_agent_history(agent: Agent, task: Task, step_index: int) -> Path | None:
+    """Never raises: a capture failure must not fail an otherwise successful node."""
+    agent_history_path = (
+        task.logs_directory / f"step_{step_index}" / AGENT_HISTORY_FILENAME
+    )
+    try:
+        agent.save_history(agent_history_path)
+        return agent_history_path
+    except Exception as e:
+        logger.warning(f"Could not save agent history: {e}")
+        return None
+
+
+async def summarize_token_usage(logs_directory: str | Path) -> dict[str, Any]:
+    token_usage_totals = Counter(
+        dict.fromkeys(("agentic_nodes", *SUMMED_USAGE_FIELDS), 0)
+    )
+
+    for agent_history_path in sorted(
+        Path(logs_directory).glob(f"step_*/{AGENT_HISTORY_FILENAME}")
+    ):
+        try:
+            async with aiofiles.open(agent_history_path) as f:
+                node_token_usage = json.loads(await f.read()).get("usage") or {}
+        except Exception as e:
+            logger.warning(f"Could not read {agent_history_path}: {e}")
+            continue
+
+        token_usage_totals["agentic_nodes"] += 1
+        token_usage_totals.update(
+            {field: node_token_usage.get(field) or 0 for field in SUMMED_USAGE_FIELDS}
+        )
+
+    return dict(token_usage_totals)
