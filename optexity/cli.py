@@ -60,21 +60,28 @@ def run_verify(args: argparse.Namespace) -> None:
     import asyncio
 
     from optexity.memory_layer.improve.loop import format_table
-    from optexity.memory_layer.runner import print_report, run
-
-    result = asyncio.run(
-        run(args.history, args.url, args.headless, args.port, args.rounds)
+    from optexity.memory_layer.run_verification import (
+        print_report,
+        run_improvement,
+        run_verification,
     )
-    if loop_result := result.get("loop"):
-        print(format_table(loop_result, result["trace"]))
+
+    if args.rounds > 1:
+        automation, trace, loop_result = asyncio.run(
+            run_improvement(
+                args.history, args.url, args.headless, args.port, args.rounds
+            )
+        )
+        print(format_table(loop_result, trace))
         succeeded = loop_result.converged
     else:
-        print_report(result["report"], result["trace"], result["seconds"])
-        succeeded = result["report"].complete
-    if args.out:
-        args.out.write_text(
-            result["automation"].model_dump_json(indent=2, exclude_none=True)
+        automation, trace, report, seconds = asyncio.run(
+            run_verification(args.history, args.url, args.headless, args.port)
         )
+        print_report(report, trace, seconds)
+        succeeded = report.complete
+    if args.out:
+        args.out.write_text(automation.model_dump_json(indent=2, exclude_none=True))
     if not succeeded:
         sys.exit(1)
 
