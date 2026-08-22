@@ -6,7 +6,8 @@ from pathlib import Path
 from optexity.memory_layer.agent_history import load_trace
 from optexity.memory_layer.capture import RECOVERY_HISTORY_FILENAME
 from optexity.memory_layer.distill.candidates import MINIMUM_STABILITY_SCORE
-from optexity.memory_layer.distill.compiler import classify, compile_nodes
+from optexity.memory_layer.distill.classify import classify
+from optexity.memory_layer.distill.compile import compile_nodes
 from optexity.memory_layer.verify.verdicts import LOCATOR_FIELDS, locator_action
 from optexity.schema.automation import ActionNode, Automation
 from optexity.schema.memory_layer import (
