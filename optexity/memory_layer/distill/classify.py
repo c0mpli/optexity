@@ -4,15 +4,8 @@ from optexity.memory_layer.distill.candidates import (
 )
 from optexity.schema.memory_layer import Trace, TraceRow
 
-DETERMINISTIC_ACTIONS = {
-    "click",
-    "input",
-    "navigate",
-    "go_back",
-    "select_dropdown",
-    "upload_file",
-}
 ELEMENT_ACTIONS = {"click", "input", "select_dropdown", "upload_file"}
+DETERMINISTIC_ACTIONS = ELEMENT_ACTIONS | {"navigate", "go_back"}
 
 READ_ONLY_ACTIONS = {
     "screenshot",
@@ -109,10 +102,7 @@ def classify(trace: Trace, automation_url: str | None) -> None:
                     f"< {MINIMUM_STABILITY_SCORE}"
                 )
                 continue
-            matches = "unprobed" if best.is_unprobed else best.match_count
-            row.reason = (
-                f"locator {best.kind} score={best.stability_score} matches={matches}"
-            )
+            row.reason = f"locator {best.kind} score={best.stability_score}"
 
         row.classification = "deterministic"
         row.reason = row.reason or f"deterministic {row.action}"

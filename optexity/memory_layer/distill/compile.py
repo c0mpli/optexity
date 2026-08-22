@@ -21,7 +21,7 @@ PARAMETER_NAME_ATTRIBUTES = ("aria-label", "placeholder", "name", "id")
 MAX_PARAMETER_NAME_CHARS = 40
 
 
-def _parameter_name_for(row: TraceRow, already_used: set[str]) -> str:
+def _parameter_name_for(row: TraceRow, taken: dict[str, list[str]]) -> str:
     name_sources = []
     if row.element:
         accessible_name = (row.element.accessible_name or "").strip()
@@ -44,15 +44,12 @@ def _parameter_name_for(row: TraceRow, already_used: set[str]) -> str:
     slug = slug or "input"
 
     name, suffix = slug, 2
-    while name in already_used:
+    while name in taken:
         name, suffix = f"{slug}_{suffix}", suffix + 1
-    already_used.add(name)
     return name
 
 
-def _action_node_for(
-    row: TraceRow, parameters: dict[str, list[str]], already_used: set[str]
-) -> dict[str, Any]:
+def _action_node_for(row: TraceRow, parameters: dict[str, list[str]]) -> dict[str, Any]:
     interaction: dict[str, Any] = {}
     best = row.best_candidate
     # Single locator only: an or_() bundle is unsafe until measured, which this
@@ -63,11 +60,10 @@ def _action_node_for(
         recorded_text = str(row.params.get("text", ""))
         redacted = SECRET_PLACEHOLDER.match(recorded_text)
         parameter_name = (
-            redacted.group(1) if redacted else _parameter_name_for(row, already_used)
+            redacted.group(1) if redacted else _parameter_name_for(row, parameters)
         )
         if redacted:
             # Redacted at capture: declare the parameter, leave it empty.
-            already_used.add(parameter_name)
             parameters[parameter_name] = [""]
         else:
             parameters[parameter_name] = [recorded_text]
@@ -87,7 +83,7 @@ def _action_node_for(
         }
     elif row.action == "upload_file":
         # A recorded path belongs to the capturing machine, so it is a parameter.
-        parameter_name = _parameter_name_for(row, already_used)
+        parameter_name = _parameter_name_for(row, parameters)
         parameters[parameter_name] = [str(row.params.get("path", ""))]
         interaction["upload_file"] = {
             "command": command,
@@ -117,11 +113,7 @@ def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
         raise ValueError("no url: pass --url or capture a trace that records one")
 
     parameters: dict[str, list[str]] = {}
-    already_used: set[str] = set()
-    nodes = [
-        _action_node_for(row, parameters, already_used)
-        for row in trace.deterministic_rows()
-    ]
+    nodes = [_action_node_for(row, parameters) for row in trace.deterministic_rows()]
 
     return Automation.model_validate(
         {
