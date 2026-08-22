@@ -179,6 +179,7 @@ class ActionNode(VariableSubstitution, BaseModel):
     end_sleep_time: float = 5.0
     expect_new_tab: bool = False
     max_new_tab_wait_time: float = 0.0
+    expect_navigation: bool = False
     localized_axtree_string: str | None = None
 
     @model_validator(mode="after")

@@ -129,6 +129,9 @@ class Task(BaseModel):
     task_callback_url: str | None = None
     task_callback_api_key: str | None = None
     is_dedicated: bool = False
+    # Verification passes replay real automations locally and must not publish
+    # their throwaway trajectories to the server.
+    upload_artifacts: bool = True
     # Dedicated limits carried with the task when is_dedicated is set via the
     # request (no DB policy row). Ignored for non-dedicated tasks and when a
     # dedicated_service DB row governs the service.

@@ -56,6 +56,27 @@ def run_distill(args: argparse.Namespace) -> None:
     print_summary(trace, automation, args.history, args.out)
 
 
+def run_verify(args: argparse.Namespace) -> None:
+    import asyncio
+
+    from optexity.memory_layer.run_verification import print_report, run_verification
+
+    automation, trace, report, seconds = asyncio.run(
+        run_verification(
+            args.history,
+            args.url,
+            args.headless,
+            args.port,
+            dict(pair.split("=", 1) for pair in args.parameter),
+        )
+    )
+    print_report(report, trace, seconds)
+    if args.out:
+        args.out.write_text(automation.model_dump_json(indent=2, exclude_none=True))
+    if not report.complete:
+        sys.exit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="optexity")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -98,6 +119,27 @@ def main() -> None:
     distill_cmd.add_argument("--url", help="defaults to the recorded url")
     distill_cmd.add_argument("--trace-out", type=Path, help="also write the trace")
     distill_cmd.set_defaults(func=run_distill)
+
+    # ---------------------------
+    # verify
+    # ---------------------------
+    verify_cmd = subparsers.add_parser(
+        "verify", help="Measure a distilled automation against the live page"
+    )
+    verify_cmd.add_argument("history", type=Path, help="path to agent_history.json")
+    verify_cmd.add_argument("-o", "--out", type=Path)
+    verify_cmd.add_argument("--url", help="defaults to the recorded url")
+    verify_cmd.add_argument("--headless", action="store_true")
+    verify_cmd.add_argument("--port", type=int, default=9222)
+    verify_cmd.add_argument(
+        "-p",
+        "--parameter",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="supply a parameter the capture redacted",
+    )
+    verify_cmd.set_defaults(func=run_verify)
 
     args = parser.parse_args()
     args.func(args)
