@@ -36,11 +36,9 @@ async def wait_for_download(browser: "Browser", before: set[str]) -> str | None:
     deadline = time.monotonic() + DOWNLOAD_SETTLE_SECONDS
     while time.monotonic() < deadline:
         arrived = files_in_downloads_dir(browser) - before
-        finished = [
-            name for name in arrived if not name.endswith((".crdownload", ".tmp"))
-        ]
-        if finished:
-            return sorted(finished)[0]
+        done = sorted(n for n in arrived if not n.endswith((".crdownload", ".tmp")))
+        if done:
+            return done[0]
         await asyncio.sleep(0.1)
     return None
 
@@ -95,6 +93,11 @@ async def observe_effect(
         return False, f"still on {after_url}", False
 
     if row.action == "input":
+        if getattr(node.interaction_action, "agentic_task", None) is not None:
+            # An agentic node has no command by construction, so its absence is
+            # not evidence the node was inert. Judging it so stopped the pass on
+            # the very rows the loop exists to re-learn.
+            return True, "the agent handled this step", navigated
         action = getattr(node.interaction_action, "input_text", None)
         command = action.command if action else None
         if not command:

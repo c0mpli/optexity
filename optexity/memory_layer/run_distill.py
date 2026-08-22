@@ -4,12 +4,12 @@ from optexity.memory_layer.agent_history import load_trace
 from optexity.memory_layer.distill.classify import classify
 from optexity.memory_layer.distill.compile import trace_to_automation
 from optexity.schema.automation import Automation
-from optexity.schema.memory_layer import Trace
+from optexity.schema.memory_layer import Classification, Trace
 
 CLASSIFICATION_MARKS = {
-    "deterministic": "keep",
-    "redundant": "drop",
-    "non_deterministic": "llm",
+    Classification.DETERMINISTIC: "keep",
+    Classification.REDUNDANT: "drop",
+    Classification.NON_DETERMINISTIC: "llm",
 }
 
 

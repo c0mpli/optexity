@@ -1,11 +1,27 @@
 from enum import StrEnum
 from operator import attrgetter
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-Classification = Literal["deterministic", "redundant", "non_deterministic"]
+
+class Classification(StrEnum):
+    """What the distiller concluded about a recorded action."""
+
+    # compiles to a command node
+    DETERMINISTIC = "deterministic"
+    # had no effect worth reproducing
+    REDUNDANT = "redundant"
+    # real work, but nothing identifies the element well enough to commit to
+    NON_DETERMINISTIC = "non_deterministic"
+
+
 by_stability = attrgetter("stability_score")
+
+
+def placeholder(parameter_name: str) -> str:
+    """How the runtime's replace_variables spells a parameter reference."""
+    return f"{{{parameter_name}[0]}}"
 
 
 class Element(BaseModel):
@@ -17,6 +33,18 @@ class Element(BaseModel):
     stable_hash: int | None = None
     frame_id: str | None = None
 
+    def label(self, attribute_names: tuple[str, ...]) -> str:
+        """The most human-readable handle this element offers, else empty."""
+        accessible_name = (self.accessible_name or "").strip()
+        return accessible_name or next(
+            (
+                self.attributes[name]
+                for name in attribute_names
+                if self.attributes.get(name)
+            ),
+            "",
+        )
+
     @property
     def is_in_subframe(self) -> bool:
         return self.frame_id is not None
@@ -25,11 +53,10 @@ class Element(BaseModel):
         """Hashes cannot locate an element, but they do tell two rows apart."""
         if other is None or self.frame_id != other.frame_id:
             return False
-        for hash_attribute in ("stable_hash", "element_hash"):
-            mine = getattr(self, hash_attribute)
-            theirs = getattr(other, hash_attribute)
-            if mine is not None and theirs is not None:
-                return mine == theirs
+        if self.stable_hash is not None and other.stable_hash is not None:
+            return self.stable_hash == other.stable_hash
+        if self.element_hash is not None and other.element_hash is not None:
+            return self.element_hash == other.element_hash
         return bool(self.xpath) and self.xpath == other.xpath
 
 
@@ -109,8 +136,20 @@ class Trace(BaseModel):
         """Only the steps' own durations, so it excludes browser startup."""
         return sum(row.step_duration_seconds or 0.0 for row in self.rows)
 
-    def deterministic_rows(self) -> list[TraceRow]:
-        return [row for row in self.rows if row.classification == "deterministic"]
+    def rows_with(self, *classifications: Classification) -> list[TraceRow]:
+        return [row for row in self.rows if row.classification in classifications]
+
+    def compiled_rows(self) -> list[TraceRow]:
+        """Every row that becomes a node, in order.
+
+        Includes the rows we refused to make deterministic: they compile to a
+        narrow agentic node rather than vanishing, so the node list stays a
+        complete path. A hole would leave a replay silently skipping the step
+        and strand every node after it on the wrong page.
+        """
+        return self.rows_with(
+            Classification.DETERMINISTIC, Classification.NON_DETERMINISTIC
+        )
 
     def counts_by_classification(self) -> dict[str, int]:
         counts = {"total": len(self.rows)}
@@ -139,6 +178,8 @@ class VerdictStatus(StrEnum):
 
     # locator measured at exactly one match, and the node had an observable effect
     VERIFIED = "verified"
+    # the step still needs the agent: it compiled to an agentic node
+    AGENTIC = "agentic"
     # nothing measurable identified the element, so the row lost its command
     DEMOTED = "demoted"
     # the node ran but showed no evidence it acted; nothing can be concluded
@@ -176,8 +217,26 @@ class VerificationReport(BaseModel):
 
     @property
     def verified_count(self) -> int:
-        return sum(1 for verdict in self.verdicts if verdict.status == "verified")
+        return sum(
+            1 for verdict in self.verdicts if verdict.status == VerdictStatus.VERIFIED
+        )
 
     @property
     def complete(self) -> bool:
         return self.stopped_at is None and bool(self.verdicts)
+
+
+class NodePatch(BaseModel):
+    index: int
+    prompt_instructions: str | None = None
+    agentic_task: str | None = None
+
+
+class AutomationPatch(BaseModel):
+    """Everything the model is allowed to change. Notably absent: command — with
+    nowhere in the patch to put one, the eval(f"page.{command}") surface in
+    browser.py stays closed by the shape of the request, not by validation."""
+
+    rename_parameters: dict[str, str] = Field(default_factory=dict)
+    constant_parameters: list[str] = Field(default_factory=list)
+    nodes: list[NodePatch] = Field(default_factory=list)

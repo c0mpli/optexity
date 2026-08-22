@@ -77,6 +77,21 @@ def run_verify(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def run_enrich(args: argparse.Namespace) -> None:
+    import asyncio
+
+    from optexity.inference.models.chat_litellm import build_agent_llm
+    from optexity.memory_layer.improve.enrich import enrich, print_enrichment
+    from optexity.memory_layer.run_distill import distill
+
+    automation, trace = distill(args.history, args.url)
+    enriched = asyncio.run(
+        enrich(automation, trace, build_agent_llm(args.model), args.objective)
+    )
+    args.out.write_text(enriched.model_dump_json(indent=2, exclude_none=True))
+    print_enrichment(automation, enriched, args.history, args.out)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="optexity")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -140,6 +155,19 @@ def main() -> None:
         help="supply a parameter the capture redacted",
     )
     verify_cmd.set_defaults(func=run_verify)
+
+    # ---------------------------
+    # enrich
+    # ---------------------------
+    enrich_cmd = subparsers.add_parser(
+        "enrich", help="Let an LLM improve a compiled automation"
+    )
+    enrich_cmd.add_argument("history", type=Path, help="path to agent_history.json")
+    enrich_cmd.add_argument("-o", "--out", type=Path, required=True)
+    enrich_cmd.add_argument("--url", help="defaults to the recorded url")
+    enrich_cmd.add_argument("--objective", default="")
+    enrich_cmd.add_argument("--model")
+    enrich_cmd.set_defaults(func=run_enrich)
 
     args = parser.parse_args()
     args.func(args)

@@ -2,10 +2,10 @@ from optexity.memory_layer.distill.candidates import (
     MINIMUM_STABILITY_SCORE,
     build_candidates,
 )
-from optexity.schema.memory_layer import Trace, TraceRow
+from optexity.memory_layer.distill.compile import ACTION_FIELD
+from optexity.schema.memory_layer import Classification, Trace, TraceRow
 
-ELEMENT_ACTIONS = {"click", "input", "select_dropdown", "upload_file"}
-DETERMINISTIC_ACTIONS = ELEMENT_ACTIONS | {"navigate", "go_back"}
+DETERMINISTIC_ACTIONS = {*ACTION_FIELD, "navigate", "go_back"}
 
 READ_ONLY_ACTIONS = {
     "screenshot",
@@ -21,7 +21,6 @@ READ_ONLY_ACTIONS = {
 # distil to typing only. key_press cannot express it: handle_keypress takes
 # Enter/Tab/Space, KEY_NAMES has none.
 ENTER_KEYS = {"Enter", "Return", "\n"}
-
 # evaluate runs whatever javascript the agent wrote, so "read-only" is a claim
 # about the code, not about the action. Anything that could write is kept.
 MUTATING_JS = (
@@ -45,32 +44,45 @@ def _mutates_the_page(row: TraceRow) -> bool:
     return any(marker.replace(" ", "") in code for marker in MUTATING_JS)
 
 
+def _mark(row: TraceRow, classification: Classification, reason: str) -> None:
+    row.classification, row.reason = classification, reason
+
+
 def classify(trace: Trace, automation_url: str | None) -> None:
     seen_first_action = False
 
     for row in trace.rows:
         if not row.executed:
-            row.classification = "redundant"
-            row.reason = "action never executed"
+            _mark(row, Classification.REDUNDANT, "action never executed")
             continue
         if row.error:
-            row.classification = "redundant"
-            row.reason = f"action errored ({row.error[:120]})"
+            _mark(row, Classification.REDUNDANT, f"action errored ({row.error[:120]})")
             continue
         if row.action == "scroll":
-            row.classification = "redundant"
-            row.reason = "the command path already scrolls the element into view"
+            _mark(
+                row,
+                Classification.REDUNDANT,
+                "the command path already scrolls the element into view",
+            )
             continue
         if row.action not in DETERMINISTIC_ACTIONS:
             if row.action in READ_ONLY_ACTIONS and not _mutates_the_page(row):
-                row.classification = "redundant"
-                row.reason = f"'{row.action}' only observes the page"
+                _mark(
+                    row,
+                    Classification.REDUNDANT,
+                    f"'{row.action}' only observes the page",
+                )
+            elif row.action == "evaluate":
+                _mark(
+                    row,
+                    Classification.NON_DETERMINISTIC,
+                    "evaluate ran javascript that can write to the page",
+                )
             else:
-                row.classification = "non_deterministic"
-                row.reason = (
-                    "evaluate ran javascript that can write to the page"
-                    if row.action == "evaluate"
-                    else f"no deterministic equivalent for '{row.action}'"
+                _mark(
+                    row,
+                    Classification.NON_DETERMINISTIC,
+                    f"no equivalent for '{row.action}'",
                 )
             continue
         if (
@@ -79,24 +91,33 @@ def classify(trace: Trace, automation_url: str | None) -> None:
             and automation_url
             and (row.params.get("url") or "").rstrip("/") == automation_url.rstrip("/")
         ):
-            row.classification = "redundant"
-            row.reason = "the run already begins on the automation url"
+            _mark(
+                row,
+                Classification.REDUNDANT,
+                "the run already begins on the automation url",
+            )
             continue
 
-        if row.action in ELEMENT_ACTIONS:
+        if row.action in ACTION_FIELD:
             if row.element is None:
-                row.classification = "non_deterministic"
-                row.reason = "no element was recorded for this action"
+                _mark(
+                    row,
+                    Classification.NON_DETERMINISTIC,
+                    "no element was recorded for this action",
+                )
                 continue
             if row.element.is_in_subframe:
-                row.classification = "non_deterministic"
-                row.reason = f"element is inside frame {row.element.frame_id}"
+                _mark(
+                    row,
+                    Classification.NON_DETERMINISTIC,
+                    f"element is inside frame {row.element.frame_id}",
+                )
                 continue
 
             row.candidates = build_candidates(row.element)
             best = row.best_candidate
             if best is None or best.stability_score < MINIMUM_STABILITY_SCORE:
-                row.classification = "non_deterministic"
+                row.classification = Classification.NON_DETERMINISTIC
                 row.reason = (
                     f"best locator scores {best.stability_score if best else 0} "
                     f"< {MINIMUM_STABILITY_SCORE}"
@@ -104,7 +125,7 @@ def classify(trace: Trace, automation_url: str | None) -> None:
                 continue
             row.reason = f"locator {best.kind} score={best.stability_score}"
 
-        row.classification = "deterministic"
+        row.classification = Classification.DETERMINISTIC
         row.reason = row.reason or f"deterministic {row.action}"
         seen_first_action = True
 
@@ -120,10 +141,13 @@ def _fold_enter_into_preceding_input(trace: Trace) -> None:
             keys = str(row.params.get("keys", ""))
             if keys in ENTER_KEYS and previous_kept.action == "input":
                 previous_kept.params["press_enter"] = True
-                row.classification = "redundant"
-                row.reason = f"folded into step {previous_kept.step} as press_enter"
+                _mark(
+                    row,
+                    Classification.REDUNDANT,
+                    f"folded into step {previous_kept.step} as press_enter",
+                )
                 continue
-        if row.classification == "deterministic":
+        if row.classification == Classification.DETERMINISTIC:
             previous_kept = row
 
 
@@ -134,7 +158,7 @@ def _mark_superseded_interactions(trace: Trace) -> None:
     neither -- two on a checkbox cancel out, two on a stepper count twice -- so a
     repeated click is left alone. Element identity comes from element_hash, which
     cannot find an element on a page but can tell two recorded rows apart."""
-    deterministic = trace.deterministic_rows()
+    deterministic = trace.rows_with(Classification.DETERMINISTIC)
     for row, following in zip(deterministic, deterministic[1:], strict=False):
         if row.action != following.action:
             continue
@@ -150,5 +174,5 @@ def _mark_superseded_interactions(trace: Trace) -> None:
                 continue
         else:
             continue
-        row.classification = "redundant"
+        row.classification = Classification.REDUNDANT
         row.reason = f"superseded by the same {row.action} at step {following.step}"

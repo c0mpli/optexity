@@ -17,6 +17,7 @@ from optexity.memory_layer.verify.verdicts import locator_action
 from optexity.schema.automation import Automation
 from optexity.schema.memory import Memory
 from optexity.schema.memory_layer import (
+    Classification,
     NodeVerdict,
     RunSignals,
     Trace,
@@ -45,7 +46,7 @@ async def verify_automation(
     from optexity.inference.core.run_automation import run_action_node
 
     report = VerificationReport(url=automation.url)
-    rows = trace.deterministic_rows()
+    rows = trace.compiled_rows()
     if len(rows) != len(automation.nodes):
         report.stopped_at = 0
         report.stopped_because = (
@@ -67,6 +68,8 @@ async def verify_automation(
 
         live_url = await browser.get_current_page_url()
 
+        agentic = getattr(node.interaction_action, "agentic_task", None) is not None
+
         action = locator_action(node)
         if action is not None:
             await probe_row(row, browser)
@@ -77,7 +80,7 @@ async def verify_automation(
                 if row.url_before and not same_page(live_url, row.url_before):
                     reason = f"{reason}; on {live_url}, recorded at {row.url_before}"
                 verdict.status = VerdictStatus.DEMOTED
-                row.classification = "non_deterministic"
+                row.classification = Classification.NON_DETERMINISTIC
                 verdict.reason = row.reason = reason
                 report.verdicts.append(verdict)
                 report.stopped_at = position
@@ -117,7 +120,10 @@ async def verify_automation(
             report.stopped_because = "node executed without evidence it acted"
             break
 
-        verdict.status = VerdictStatus.VERIFIED
+        # An agentic node working proves the agent can still do the step, not
+        # that anything was made deterministic. Calling it verified would let a
+        # run of pure LLM steps read as a fully compiled automation.
+        verdict.status = VerdictStatus.AGENTIC if agentic else VerdictStatus.VERIFIED
         if verdict.downloaded:
             evidence = f"{evidence}; downloaded {verdict.downloaded}"
         verdict.reason = f"{verdict.reason}; {evidence}"
