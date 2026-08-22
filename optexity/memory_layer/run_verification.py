@@ -4,7 +4,7 @@ import uuid
 from copy import deepcopy
 from pathlib import Path
 
-from optexity.memory_layer.distill.compiler import distill
+from optexity.memory_layer.run_distill import distill
 from optexity.memory_layer.verify.session import make_build_session, missing_parameters
 from optexity.memory_layer.verify.verdicts import apply_verdicts
 from optexity.memory_layer.verify.walk import verify_automation
@@ -14,13 +14,17 @@ from optexity.schema.memory_layer import Trace, VerificationReport
 logger = logging.getLogger(__name__)
 
 
-def compile_for_run(history_path: Path, url: str | None) -> tuple[Automation, Trace]:
+def compile_for_run(
+    history_path: Path, url: str | None, supplied: dict[str, str] | None = None
+) -> tuple[Automation, Trace]:
     """Distil, and refuse a run that would measure an error page.
 
     An empty password makes every later node measure the login form it never got
     past, turning one missing value into a page of fabricated verdicts.
     """
     automation, trace = distill(history_path, url)
+    for name, value in (supplied or {}).items():
+        automation.parameters.input_parameters[name] = [value]
     unset = missing_parameters(automation)
     if unset:
         raise SystemExit(
@@ -32,9 +36,13 @@ def compile_for_run(history_path: Path, url: str | None) -> tuple[Automation, Tr
 
 
 async def run_verification(
-    history_path: Path, url: str | None, headless: bool, port: int
+    history_path: Path,
+    url: str | None,
+    headless: bool,
+    port: int,
+    supplied: dict[str, str] | None = None,
 ) -> tuple[Automation, Trace, VerificationReport, float]:
-    automation, trace = compile_for_run(history_path, url)
+    automation, trace = compile_for_run(history_path, url, supplied)
 
     build_session = make_build_session(headless, port)
     task, memory, browser, teardown = await build_session(

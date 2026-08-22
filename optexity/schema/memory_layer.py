@@ -1,3 +1,4 @@
+from enum import StrEnum
 from operator import attrgetter
 from typing import Any, Literal
 
@@ -133,13 +134,27 @@ class CapturedUsage(BaseModel):
     total_tokens: int = 0
 
 
+class VerdictStatus(StrEnum):
+    """What the walk established about one node."""
+
+    # locator measured at exactly one match, and the node had an observable effect
+    VERIFIED = "verified"
+    # nothing measurable identified the element, so the row lost its command
+    DEMOTED = "demoted"
+    # the node ran but showed no evidence it acted; nothing can be concluded
+    UNMEASURED = "unmeasured"
+    # the pass stopped earlier, so this row was never exercised
+    NOT_REACHED = "not_reached"
+
+
 class NodeVerdict(BaseModel):
     step: int
     action: str
-    status: str  # verified | demoted | unmeasured | not_reached
+    status: VerdictStatus
     command: str | None = None
     reason: str = ""
     downloaded: str | None = None
+    navigated: bool = False
 
 
 class RunSignals(BaseModel):

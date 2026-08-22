@@ -1,6 +1,10 @@
+from optexity.memory_layer.distill.compile import (
+    SLEEP_AFTER_INTERACTION,
+    SLEEP_AFTER_NAVIGATION,
+)
 from optexity.schema.actions.interaction_action import BaseAction
 from optexity.schema.automation import ActionNode, Automation
-from optexity.schema.memory_layer import VerificationReport
+from optexity.schema.memory_layer import VerdictStatus, VerificationReport
 
 LOCATOR_FIELDS = ("click_element", "input_text", "select_option", "upload_file")
 
@@ -29,6 +33,13 @@ def apply_verdicts(automation: Automation, report: VerificationReport) -> None:
     )
 
     for verdict, node in zip(report.verdicts, automation.nodes, strict=False):
+        # The recording's own urls lag the actions that caused them, so a step
+        # that navigated can compile to the short wait. The walk watched the
+        # live page, so prefer what it saw over what was written down.
+        if verdict.status in (VerdictStatus.VERIFIED, VerdictStatus.AGENTIC):
+            node.end_sleep_time = (
+                SLEEP_AFTER_NAVIGATION if verdict.navigated else SLEEP_AFTER_INTERACTION
+            )
         action = locator_action(node)
         if verdict.command and action is not None:
             action.command = verdict.command

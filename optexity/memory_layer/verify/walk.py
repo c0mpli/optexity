@@ -20,6 +20,7 @@ from optexity.schema.memory_layer import (
     NodeVerdict,
     RunSignals,
     Trace,
+    VerdictStatus,
     VerificationReport,
 )
 from optexity.schema.task import Task
@@ -54,7 +55,9 @@ async def verify_automation(
         return report
 
     for position, (row, node) in enumerate(zip(rows, automation.nodes, strict=True)):
-        verdict = NodeVerdict(step=row.step, action=row.action, status="not_reached")
+        verdict = NodeVerdict(
+            step=row.step, action=row.action, status=VerdictStatus.NOT_REACHED
+        )
 
         # Mirror run_action_node's own preamble before probing, so the probe and
         # the execution address the same document: handle_new_tabs switches to
@@ -73,7 +76,7 @@ async def verify_automation(
                 # element from a different page than the recording is normal.
                 if row.url_before and not same_page(live_url, row.url_before):
                     reason = f"{reason}; on {live_url}, recorded at {row.url_before}"
-                verdict.status = "demoted"
+                verdict.status = VerdictStatus.DEMOTED
                 row.classification = "non_deterministic"
                 verdict.reason = row.reason = reason
                 report.verdicts.append(verdict)
@@ -103,16 +106,18 @@ async def verify_automation(
         if row.action == "click":
             verdict.downloaded = await wait_for_download(browser, downloads_before)
 
-        effective, evidence = await observe_effect(row, node, browser, before_url)
+        effective, evidence, verdict.navigated = await observe_effect(
+            row, node, browser, before_url
+        )
         if not effective:
-            verdict.status = "unmeasured"
+            verdict.status = VerdictStatus.UNMEASURED
             verdict.reason = f"{verdict.reason}; no observable effect ({evidence})"
             report.verdicts.append(verdict)
             report.stopped_at = position
             report.stopped_because = "node executed without evidence it acted"
             break
 
-        verdict.status = "verified"
+        verdict.status = VerdictStatus.VERIFIED
         if verdict.downloaded:
             evidence = f"{evidence}; downloaded {verdict.downloaded}"
         verdict.reason = f"{verdict.reason}; {evidence}"
@@ -123,7 +128,7 @@ async def verify_automation(
             NodeVerdict(
                 step=row.step,
                 action=row.action,
-                status="not_reached",
+                status=VerdictStatus.NOT_REACHED,
                 reason="pass stopped before this row",
             )
         )
