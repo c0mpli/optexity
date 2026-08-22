@@ -248,7 +248,8 @@ class RoundResult(BaseModel):
     verified: int
     agentic: int
     unresolved: int
-    llm_tokens: int = 0
+    # None when the round drove an agent whose usage was never recorded.
+    llm_tokens: int | None = 0
     seconds: float = 0.0
 
 
