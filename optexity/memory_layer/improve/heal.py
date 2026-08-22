@@ -78,7 +78,7 @@ def best_command(
     return None
 
 
-def recovered_nodes(step_directory: Path, url: str | None) -> list[ActionNode]:
+def recovered_nodes(step_directory: Path, automation: Automation) -> list[ActionNode]:
     """The steps an overlay-closing agent had to take, as optional nodes.
 
     A blocked node makes the error classifier fire a popup closer, which is an
@@ -94,13 +94,17 @@ def recovered_nodes(step_directory: Path, url: str | None) -> list[ActionNode]:
         return []
 
     trace = load_trace(path)
-    classify(trace, url)
+    classify(trace, automation.url)
     for row in trace.rows:
         if row.classification != Classification.DETERMINISTIC:
             row.classification = Classification.REDUNDANT
 
     nodes = []
-    for node in compile_nodes(trace, {}, set()):
+    # Declare into the automation's own parameters: a recovery that types
+    # something would otherwise emit a placeholder nothing substitutes, and the
+    # field would receive the literal {name[0]}.
+    parameters = automation.parameters.input_parameters
+    for node in compile_nodes(trace, parameters, set(parameters)):
         interaction = node.get("interaction_action") or {}
         action = next(
             (interaction[field] for field in LOCATOR_FIELDS if field in interaction),
@@ -129,7 +133,7 @@ def heal(automation: Automation, logs_directory: str | Path) -> HealReport:
     insertions: list[tuple[int, list[ActionNode]]] = []
 
     for position, node in enumerate(automation.nodes):
-        grown = recovered_nodes(logs / f"step_{position}", automation.url)
+        grown = recovered_nodes(logs / f"step_{position}", automation)
         if grown:
             insertions.append((position, grown))
             report.growth.append(
