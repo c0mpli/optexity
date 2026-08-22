@@ -66,8 +66,11 @@ def _declare_parameter(
     """Record a recorded value as an input parameter, returning its placeholder."""
     redacted = SECRET_PLACEHOLDER.match(value)
     name = redacted.group(1) if redacted else _parameter_name_for(row, parameters)
-    # Redacted at capture: declare the parameter, leave it empty.
-    parameters[name] = [""] if redacted else [value]
+    # Declared, never written down. Not secure_parameters: that holds vault
+    # references, and a recording has none to emit.
+    element = row.element
+    is_password = bool(element) and element.attributes.get("type") == "password"
+    parameters[name] = [""] if redacted or is_password else [value]
     return placeholder(name)
 
 
@@ -160,13 +163,11 @@ def _agentic_node_for(row: TraceRow) -> dict[str, Any]:
     )
 
 
-def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
-    automation_url = url or trace.url
-    if not automation_url:
-        raise ValueError("no url: pass --url or capture a trace that records one")
-
-    parameters: dict[str, list[str]] = {}
-    nodes = [
+def compile_nodes(
+    trace: Trace, parameters: dict[str, list[str]]
+) -> list[dict[str, Any]]:
+    """One node per compiled row, declaring its parameters into ``parameters``."""
+    return [
         (
             _action_node_for(row, parameters)
             if row.classification == Classification.DETERMINISTIC
@@ -174,6 +175,15 @@ def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
         )
         for row in trace.compiled_rows()
     ]
+
+
+def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
+    automation_url = url or trace.url
+    if not automation_url:
+        raise ValueError("no url: pass --url or capture a trace that records one")
+
+    parameters: dict[str, list[str]] = {}
+    nodes = compile_nodes(trace, parameters)
 
     return Automation.model_validate(
         {

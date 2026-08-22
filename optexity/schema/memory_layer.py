@@ -17,6 +17,7 @@ class Classification(StrEnum):
 
 
 by_stability = attrgetter("stability_score")
+by_score = attrgetter("score")
 
 
 def placeholder(parameter_name: str) -> str:
@@ -257,3 +258,41 @@ class LoopResult(BaseModel):
     rounds: list[RoundResult] = Field(default_factory=list)
     converged: bool = False
     stopped_because: str = ""
+
+
+class RecordedLocator(BaseModel):
+    """One entry of step_N/locator_candidates.json.
+
+    log_interacted_locator writes page.<locator><method> for a human to paste
+    into a console, so `locator` is not a command until the prefix and the
+    trailing call come off.
+    """
+
+    locator: str = ""
+    kind: str = ""
+    score: int = 0
+
+
+class NodeHeal(BaseModel):
+    node: int
+    was: str | None
+    now: str
+    kind: str
+    score: int
+
+
+class NodeGrowth(BaseModel):
+    before: int
+    commands: list[str]
+
+
+class HealReport(BaseModel):
+    heals: list[NodeHeal] = Field(default_factory=list)
+    growth: list[NodeGrowth] = Field(default_factory=list)
+    rescued: int = 0
+    nodes: int = 0
+
+    @property
+    def determinism(self) -> float:
+        """Share of locator-driven nodes that ran without the LLM."""
+        return 1.0 if not self.nodes else 1 - self.rescued / self.nodes
