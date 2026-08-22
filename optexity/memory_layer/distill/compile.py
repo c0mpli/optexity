@@ -43,7 +43,7 @@ PARAMETER_NAME_ATTRIBUTES = ("aria-label", "placeholder", "name", "id")
 MAX_PARAMETER_NAME_CHARS = 40
 
 
-def _parameter_name_for(row: TraceRow, already_used: set[str]) -> str:
+def _parameter_name_for(row: TraceRow, taken: dict[str, list[str]]) -> str:
     source = row.element.label(PARAMETER_NAME_ATTRIBUTES) if row.element else ""
     if len(source) > MAX_PARAMETER_NAME_CHARS:
         source = ""
@@ -53,7 +53,7 @@ def _parameter_name_for(row: TraceRow, already_used: set[str]) -> str:
     slug = re.sub(r"^\d+_?", "", slug) or "input"
 
     name, suffix = slug, 2
-    while name in already_used:
+    while name in taken:
         name, suffix = f"{slug}_{suffix}", suffix + 1
     return name
 
@@ -62,12 +62,10 @@ def _declare_parameter(
     row: TraceRow,
     value: str,
     parameters: dict[str, list[str]],
-    already_used: set[str],
 ) -> str:
     """Record a recorded value as an input parameter, returning its placeholder."""
     redacted = SECRET_PLACEHOLDER.match(value)
-    name = redacted.group(1) if redacted else _parameter_name_for(row, already_used)
-    already_used.add(name)
+    name = redacted.group(1) if redacted else _parameter_name_for(row, parameters)
     # Redacted at capture: declare the parameter, leave it empty.
     parameters[name] = [""] if redacted else [value]
     return placeholder(name)
@@ -83,9 +81,7 @@ def _node(row: TraceRow, interaction: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _action_node_for(
-    row: TraceRow, parameters: dict[str, list[str]], already_used: set[str]
-) -> dict[str, Any]:
+def _action_node_for(row: TraceRow, parameters: dict[str, list[str]]) -> dict[str, Any]:
     interaction: dict[str, Any] = {}
 
     if row.action in ACTION_FIELD:
@@ -101,7 +97,7 @@ def _action_node_for(
         }
         if row.action == "input":
             action["input_text"] = _declare_parameter(
-                row, str(row.params.get("text", "")), parameters, already_used
+                row, str(row.params.get("text", "")), parameters
             )
             action["press_enter"] = bool(row.params.get("press_enter"))
         elif row.action == "select_dropdown":
@@ -109,7 +105,7 @@ def _action_node_for(
         elif row.action == "upload_file":
             # A recorded path belongs to the capturing machine, so it is a parameter.
             action["file_path"] = _declare_parameter(
-                row, str(row.params.get("path", "")), parameters, already_used
+                row, str(row.params.get("path", "")), parameters
             )
         interaction = {ACTION_FIELD[row.action]: action, "max_tries": MAX_TRIES}
     elif row.action == "navigate":
@@ -170,10 +166,9 @@ def trace_to_automation(trace: Trace, url: str | None = None) -> Automation:
         raise ValueError("no url: pass --url or capture a trace that records one")
 
     parameters: dict[str, list[str]] = {}
-    already_used: set[str] = set()
     nodes = [
         (
-            _action_node_for(row, parameters, already_used)
+            _action_node_for(row, parameters)
             if row.classification == Classification.DETERMINISTIC
             else _agentic_node_for(row)
         )
