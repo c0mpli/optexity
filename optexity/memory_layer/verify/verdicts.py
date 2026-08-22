@@ -36,7 +36,7 @@ def apply_verdicts(automation: Automation, report: VerificationReport) -> None:
         # The recording's own urls lag the actions that caused them, so a step
         # that navigated can compile to the short wait. The walk watched the
         # live page, so prefer what it saw over what was written down.
-        if verdict.status == VerdictStatus.VERIFIED:
+        if verdict.status in (VerdictStatus.VERIFIED, VerdictStatus.AGENTIC):
             node.end_sleep_time = (
                 SLEEP_AFTER_NAVIGATION if verdict.navigated else SLEEP_AFTER_INTERACTION
             )
