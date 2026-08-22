@@ -109,7 +109,9 @@ async def verify_automation(
         if row.action == "click":
             verdict.downloaded = await wait_for_download(browser, downloads_before)
 
-        effective, evidence = await observe_effect(row, node, browser, before_url)
+        effective, evidence, verdict.navigated = await observe_effect(
+            row, node, browser, before_url
+        )
         if not effective:
             verdict.status = VerdictStatus.UNMEASURED
             verdict.reason = f"{verdict.reason}; no observable effect ({evidence})"

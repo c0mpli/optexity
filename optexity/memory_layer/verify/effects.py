@@ -71,7 +71,7 @@ async def wait_for_navigation(
 
 async def observe_effect(
     row: TraceRow, node: ActionNode, browser: "Browser", before_url: str | None
-) -> tuple[bool, str]:
+) -> tuple[bool, str, bool]:
     """Whether the node that just ran actually changed anything.
 
     Deliberately not keyed on ``memory.browser_states[-1].locator_candidates``:
@@ -85,26 +85,26 @@ async def observe_effect(
 
     if row.action in NAVIGATING_ACTIONS:
         if navigated:
-            return True, f"navigated to {after_url}"
+            return True, f"navigated to {after_url}", True
         if row.action == "click" and not row.changed_url:
             # The recording says this click stayed put, so no navigation is the
             # expected outcome and there is nothing cheap left to observe.
-            return True, "clicked; recording shows no navigation for this step"
-        return False, f"still on {after_url}"
+            return True, "clicked; recording shows no navigation for this step", False
+        return False, f"still on {after_url}", False
 
     if row.action == "input":
         action = getattr(node.interaction_action, "input_text", None)
         command = action.command if action else None
         if not command:
-            return False, "no command to read back"
+            return False, "no command to read back", navigated
         try:
             locator = await browser.get_locator_from_command(command)
             value = await locator.input_value()
         except Exception as e:
-            return False, f"could not read the field back ({e})"
+            return False, f"could not read the field back ({e})", navigated
         expected = str(action.input_text)
         if value == expected:
-            return True, "field holds the value written"
-        return False, f"field holds {value!r}, expected {expected!r}"
+            return True, "field holds the value written", navigated
+        return False, f"field holds {value!r}, expected {expected!r}", navigated
 
-    return True, "no effect check for this action"
+    return True, "no effect check for this action", navigated

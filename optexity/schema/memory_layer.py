@@ -196,6 +196,7 @@ class NodeVerdict(BaseModel):
     command: str | None = None
     reason: str = ""
     downloaded: str | None = None
+    navigated: bool = False
 
 
 class RunSignals(BaseModel):
