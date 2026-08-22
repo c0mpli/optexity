@@ -3,9 +3,12 @@ import json
 import logging
 from pathlib import Path
 
-from optexity.memory_layer.agent_history import load_trace
+from optexity.memory_layer.agent_history import element_from_record, load_trace
 from optexity.memory_layer.capture import RECOVERY_HISTORY_FILENAME
-from optexity.memory_layer.distill.candidates import MINIMUM_STABILITY_SCORE
+from optexity.memory_layer.distill.candidates import (
+    MINIMUM_STABILITY_SCORE,
+    build_candidates,
+)
 from optexity.memory_layer.distill.classify import classify
 from optexity.memory_layer.distill.compile import compile_nodes
 from optexity.memory_layer.verify.verdicts import LOCATOR_FIELDS, locator_action
@@ -22,6 +25,12 @@ from optexity.schema.memory_layer import (
 logger = logging.getLogger(__name__)
 
 LOCATOR_CANDIDATES_FILENAME = "locator_candidates.json"
+INTERACTED_ELEMENT_FILENAME = "interacted_element.json"
+# Written only when a node reaches the prompt path, so it separates a node that
+# fell back from one whose command worked. locator_candidates.json does not:
+# handle_command records those for a successful command too, which would count
+# every healthy node as rescued and let a working command be rewritten.
+FALLBACK_EVIDENCE_FILENAME = "final_prompt.txt"
 # An inserted step is optional by construction: the overlay it clears may simply
 # not be there next run. One try and no prompt makes a miss cost a failed locator
 # lookup and nothing else -- no LLM call, and no raise, since the command path
@@ -48,11 +57,9 @@ def command_from_recorded(expression: str) -> str | None:
 
 
 def rescued_locators(step_directory: Path) -> list[RecordedLocator]:
-    """What the LLM fallback found, or nothing if this node never needed it.
-
-    log_interacted_locator runs only from the index-based path, which the handlers
-    reach only after the command failed. So this file existing is the signal.
-    """
+    """What the LLM fallback found, or nothing if this node never needed it."""
+    if not (step_directory / FALLBACK_EVIDENCE_FILENAME).is_file():
+        return []
     path = step_directory / LOCATOR_CANDIDATES_FILENAME
     if not path.is_file():
         return []
@@ -62,6 +69,34 @@ def rescued_locators(step_directory: Path) -> list[RecordedLocator]:
         logger.warning(f"could not read {path}: {e}")
         return []
     return [RecordedLocator.model_validate(entry) for entry in recorded]
+
+
+def rescored_locators(step_directory: Path) -> list[RecordedLocator]:
+    """Score the rescued element by this layer's rules rather than the runtime's.
+
+    The runtime drops any attribute that looks generated, which on a form whose
+    only handle is name="04fullname" leaves a positional xpath and nothing else.
+    The same ladder distillation uses re-admits those, so a node that fell back
+    on such a page can still heal into something stable.
+    """
+    path = step_directory / INTERACTED_ELEMENT_FILENAME
+    if not path.is_file():
+        return []
+    try:
+        record = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning(f"could not read {path}: {e}")
+        return []
+    return [
+        # Rebuilt as page.<locator>.x() so command_from_recorded can strip it
+        # back off the same way it does for a runtime-recorded line.
+        RecordedLocator(
+            locator=f"page.{candidate.command}.x()",
+            kind=candidate.kind,
+            score=candidate.stability_score,
+        )
+        for candidate in build_candidates(element_from_record(record))
+    ]
 
 
 def best_command(
@@ -148,12 +183,13 @@ def heal(automation: Automation, logs_directory: str | Path) -> HealReport:
             continue
         report.nodes += 1
 
-        candidates = rescued_locators(logs / f"step_{position}")
+        step_directory = logs / f"step_{position}"
+        candidates = rescued_locators(step_directory)
         if not candidates:
             continue
         report.rescued += 1
 
-        chosen = best_command(candidates)
+        chosen = best_command(candidates + rescored_locators(step_directory))
         if chosen is None:
             logger.info(f"node {position}: rescued, but nothing stable enough to keep")
             continue

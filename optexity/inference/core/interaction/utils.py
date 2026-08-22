@@ -521,6 +521,16 @@ class LocatorExtraction:
                     f"(+{len(candidates) - 1} more candidate(s))"
                 )
                 cls.record_locator_candidates(memory, candidates)
+                # The candidates are already scored, and _looks_dynamic drops a
+                # whole class of usable attributes before scoring. Keep the raw
+                # element too, so a later pass can score it by its own rules.
+                if memory is not None and memory.browser_states:
+                    memory.browser_states[-1].interacted_element = {
+                        "node_name": element.tag_name,
+                        "attributes": dict(element.attributes or {}),
+                        "x_path": element.xpath,
+                        "ax_name": getattr(element.ax_node, "name", None),
+                    }
         except Exception as e:
             logger.debug(
                 f"log_interacted_locator failed for index {index}: {type(e).__name__}: {e}"
