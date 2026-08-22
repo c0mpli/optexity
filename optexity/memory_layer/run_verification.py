@@ -84,7 +84,11 @@ def print_report(report, trace, seconds: float) -> None:
         (
             "llm tokens",
             trace.agentic_tokens or "unrecorded",
-            report.signals.llm_tokens,
+            (
+                report.signals.llm_tokens
+                if report.signals.llm_tokens is not None
+                else "unrecorded"
+            ),
         ),
         ("seconds", round(trace.agentic_seconds, 1), round(seconds, 1)),
     ):
