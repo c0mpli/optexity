@@ -4,7 +4,7 @@ import uuid
 from copy import deepcopy
 from pathlib import Path
 
-from optexity.memory_layer.distill.compiler import distill
+from optexity.memory_layer.run_distill import distill
 from optexity.memory_layer.verify.session import make_build_session, missing_parameters
 from optexity.memory_layer.verify.verdicts import apply_verdicts
 from optexity.memory_layer.verify.walk import verify_automation
