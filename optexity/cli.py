@@ -47,7 +47,7 @@ def run_inference(args: argparse.Namespace) -> None:
 
 
 def run_distill(args: argparse.Namespace) -> None:
-    from optexity.memory_layer.distill.compiler import distill, print_summary
+    from optexity.memory_layer.run_distill import distill, print_summary
 
     automation, trace = distill(args.history, args.url)
     args.out.write_text(automation.model_dump_json(indent=2, exclude_none=True))
