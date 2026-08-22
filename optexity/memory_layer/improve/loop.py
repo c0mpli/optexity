@@ -173,19 +173,51 @@ async def improve(
 
 def format_table(result: LoopResult, trace: Trace) -> str:
     """The before/after the assignment asks for: the agentic run, then each round."""
-    lines = [
-        "  round   nodes   verified   agentic   unresolved   llm tokens   seconds",
-        "  " + "-" * 68,
-        f"  {'agent':>5}   {len(trace.rows):>5}   {'-':>8}   {len(trace.rows):>7}   "
-        f"{'-':>10}   {trace.agentic_tokens:>10}   {trace.agentic_seconds:>7.1f}",
-    ]
-    for round_result in result.rounds:
-        lines.append(
-            f"  {round_result.number:>5}   {round_result.nodes:>5}   "
-            f"{round_result.verified:>8}   {round_result.agentic:>7}   "
-            f"{round_result.unresolved:>10}   {round_result.llm_tokens:>10}   "
-            f"{round_result.seconds:>7}"
+    columns = (
+        "round",
+        "nodes",
+        "verified",
+        "agentic",
+        "unresolved",
+        "llm tokens",
+        "seconds",
+    )
+    widths = (5, 5, 8, 7, 10, 10, 7)
+
+    def row(cells) -> str:
+        return "  " + "   ".join(
+            f"{cell:>{width}}" for cell, width in zip(cells, widths)
         )
-    lines.append("")
-    lines.append(f"  {result.stopped_because}")
-    return "\n".join(lines)
+
+    lines = [
+        row(columns),
+        "  " + "-" * (sum(widths) + 3 * (len(widths) - 1)),
+        # agentic_tokens is None when the capture recorded no usage -- say so
+        # rather than printing a zero the run never earned.
+        row(
+            (
+                "agent",
+                len(trace.rows),
+                "-",
+                len(trace.rows),
+                "-",
+                trace.agentic_tokens if trace.agentic_tokens is not None else "?",
+                f"{trace.agentic_seconds:.1f}",
+            )
+        ),
+    ]
+    lines.extend(
+        row(
+            (
+                r.number,
+                r.nodes,
+                r.verified,
+                r.agentic,
+                r.unresolved,
+                r.llm_tokens,
+                r.seconds,
+            )
+        )
+        for r in result.rounds
+    )
+    return "\n".join(lines + ["", f"  {result.stopped_because}"])

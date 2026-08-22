@@ -66,17 +66,18 @@ def run_verify(args: argparse.Namespace) -> None:
         run_verification,
     )
 
+    supplied = dict(pair.split("=", 1) for pair in args.parameter)
     if args.rounds > 1:
         automation, trace, loop_result = asyncio.run(
             run_improvement(
-                args.history, args.url, args.headless, args.port, args.rounds
+                args.history, args.url, args.headless, args.port, args.rounds, supplied
             )
         )
         print(format_table(loop_result, trace))
         succeeded = loop_result.converged
     else:
         automation, trace, report, seconds = asyncio.run(
-            run_verification(args.history, args.url, args.headless, args.port)
+            run_verification(args.history, args.url, args.headless, args.port, supplied)
         )
         print_report(report, trace, seconds)
         succeeded = report.complete
@@ -155,6 +156,14 @@ def main() -> None:
     verify_cmd.add_argument("--url", help="defaults to the recorded url")
     verify_cmd.add_argument("--headless", action="store_true")
     verify_cmd.add_argument("--port", type=int, default=9222)
+    verify_cmd.add_argument(
+        "-p",
+        "--parameter",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="supply a parameter the capture redacted",
+    )
     verify_cmd.add_argument(
         "--rounds",
         type=int,

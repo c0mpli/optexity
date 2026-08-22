@@ -16,14 +16,18 @@ logger = logging.getLogger(__name__)
 PROBE_TIMEOUT_SECONDS = 5.0
 PROBE_BUDGET_SECONDS = 20.0
 VERIFIED_CANDIDATES_WANTED = 2
+# A checkbox list can be long; an index past this is not a locator worth having.
+POSITIONAL_MAX_MATCHES = 20
 
 
-async def probe(command: str, browser: "Browser") -> int | None:
+async def probe(
+    command: str, browser: "Browser", timeout: float = PROBE_TIMEOUT_SECONDS
+) -> int | None:
     """None and zero differ: an unparseable command tells us nothing."""
     from optexity.inference.core.run_automation import count_locator_matches
 
     try:
-        return await count_locator_matches(command, PROBE_TIMEOUT_SECONDS, browser)
+        return await count_locator_matches(command, timeout, browser)
     except Exception as e:
         # A malformed command raises in eval, before count_locator_matches.
         if "TargetClosed" in type(e).__name__:
@@ -47,6 +51,44 @@ async def probe_row(row: TraceRow, browser: "Browser") -> None:
             verified += 1
 
 
+async def _positional_command(
+    row: TraceRow, browser: "Browser"
+) -> tuple[str, str] | None:
+    """Disambiguate identical controls by their order on the page.
+
+    Two bare checkboxes carry nothing to tell them apart, so every stable
+    selector matches both and the only unique one is a brittle xpath. Intersect
+    the two: the xpath says which element was recorded, and the index it falls
+    at makes the stable selector unique without shipping the xpath.
+    """
+    oracle = next(
+        (c for c in row.candidates if c.matches_exactly_one_element and c.command), None
+    )
+    ambiguous = next(
+        (
+            c
+            for c in sorted(row.candidates, key=by_stability, reverse=True)
+            if c.match_count is not None
+            and 1 < c.match_count <= POSITIONAL_MAX_MATCHES
+            and c.stability_score >= MINIMUM_STABILITY_SCORE
+        ),
+        None,
+    )
+    if oracle is None or ambiguous is None:
+        return None
+
+    for index in range(ambiguous.match_count or 0):
+        command = f"{ambiguous.command}.nth({index})"
+        # Timeout zero: most indexes are the wrong element and would each wait
+        # out the full probe timeout before reporting the zero we expect.
+        if await probe(f"{command}.and_(page.{oracle.command})", browser, 0) == 1:
+            return command, (
+                f"{ambiguous.kind} score={ambiguous.stability_score}, "
+                f"matched {ambiguous.match_count}; disambiguated to index {index}"
+            )
+    return None
+
+
 async def choose_command(row: TraceRow, browser: "Browser") -> tuple[str | None, str]:
     verified = verified_candidates(row.candidates)
     if not verified:
@@ -61,6 +103,9 @@ async def choose_command(row: TraceRow, browser: "Browser") -> tuple[str | None,
     # Probing can demote the top candidate and leave only a far weaker one
     # unique; shipping that is the guess this layer exists to avoid.
     if best.stability_score < MINIMUM_STABILITY_SCORE:
+        positional = await _positional_command(row, browser)
+        if positional is not None:
+            return positional
         return None, (
             f"no verified candidate above threshold "
             f"(best verified: {best.kind} score={best.stability_score})"
