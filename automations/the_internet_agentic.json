@@ -1,0 +1,20 @@
+{
+  "url": "https://the-internet.herokuapp.com/",
+  "parameters": {
+    "input_parameters": {},
+    "generated_parameters": {}
+  },
+  "expected_downloads": 1,
+  "nodes": [
+    {
+      "type": "action_node",
+      "interaction_action": {
+        "agentic_task": {
+          "task": "Click the 'File Download' link. On the page that opens, click the link named exactly 'some-file.txt' to download it. Then go back to the previous page and click the 'Form Authentication' link. On the login page, fill the username field with tomsmith and the password field with SuperSecretPassword!, then click the Login button. Stop once the secure area page is shown.",
+          "max_steps": 25,
+          "backend": "browser_use"
+        }
+      }
+    }
+  ]
+}

@@ -35,6 +35,9 @@ class Settings(LLMSettings):
         validation_alias=AliasChoices("OPTEXITY_API_KEY", "API_KEY")
     )
 
+    # Dev only: run this local automation JSON instead of the stored one.
+    TEST_AUTOMATION_PATH: str | None = None
+
     CHILD_PORT_OFFSET: int = 9000
     WEBSOCKIFY_PORT: int = 8080
     DEPLOYMENT: Literal["dev", "prod"]

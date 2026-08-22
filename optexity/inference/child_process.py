@@ -458,6 +458,19 @@ async def task_processor():
                         )
                     continue
 
+            # Must stay below the re-fetch above, which overwrites task.automation.
+            if settings.TEST_AUTOMATION_PATH:
+                with open(settings.TEST_AUTOMATION_PATH) as f:
+                    task.automation = Automation.model_validate(json.load(f))
+                # worker.py re-validates the Task, which requires these to match.
+                automation_parameters = task.automation.parameters
+                task.input_parameters = dict(automation_parameters.input_parameters)
+                task.secure_parameters = dict(automation_parameters.secure_parameters)
+                task.unique_parameter_names = []
+                logger.warning(
+                    f"Using local automation override: {settings.TEST_AUTOMATION_PATH}"
+                )
+
             task_running = True
             last_task_start_time = datetime.now(timezone.utc)
             current_task_timeout_minutes = task.max_timeout_in_minutes
