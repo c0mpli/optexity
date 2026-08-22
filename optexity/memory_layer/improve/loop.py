@@ -214,7 +214,7 @@ def format_table(result: LoopResult, trace: Trace) -> str:
                 r.verified,
                 r.agentic,
                 r.unresolved,
-                r.llm_tokens,
+                r.llm_tokens if r.llm_tokens is not None else "?",
                 r.seconds,
             )
         )

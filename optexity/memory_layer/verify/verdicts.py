@@ -40,6 +40,10 @@ def apply_verdicts(automation: Automation, report: VerificationReport) -> None:
             node.end_sleep_time = (
                 SLEEP_AFTER_NAVIGATION if verdict.navigated else SLEEP_AFTER_INTERACTION
             )
+            # end_sleep_time alone does not cover it: wait_for_load_state
+            # resolves against the already-loaded old page, so a node that
+            # navigates has to say so to be waited for.
+            node.expect_navigation = verdict.navigated
         action = locator_action(node)
         if verdict.command and action is not None:
             action.command = verdict.command

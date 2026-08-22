@@ -430,6 +430,11 @@ async def run_action_node(
     await action_node.replace_variables(memory.variables.generated_variables)
     resolve_api_variables_in_node(action_node, memory.variables.generated_variables)
 
+    # Read before the action so expect_navigation has something to compare to.
+    url_before_action = (
+        await browser.get_current_page_url() if action_node.expect_navigation else ""
+    )
+
     # ## TODO: optimize this by taking screenshot and axtree only if needed
     # browser_state_summary = await browser.get_browser_state_summary()
 
@@ -505,10 +510,31 @@ async def run_action_node(
             logger.debug(f"Switched to new tab after {total_time} seconds, as expected")
 
     else:
+        if action_node.expect_navigation:
+            await wait_for_navigation(
+                browser, url_before_action, action_node.end_sleep_time
+            )
         await sleep_for_page_to_load(browser, action_node.end_sleep_time)
 
     logger.debug(f"-----Finished node {memory.automation_state.step_index}-----")
     memory.update_system_info()
+
+
+async def wait_for_navigation(browser: Browser, from_url: str, timeout: float) -> bool:
+    """Block until the page actually leaves ``from_url``.
+
+    click_locator runs with no_wait_after, so a navigation the node triggered is
+    still in flight when the click returns. sleep_for_page_to_load cannot cover
+    it: wait_for_load_state resolves at once against the old document, which is
+    already loaded. Only nodes that declare expect_navigation pay this wait.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _is_same_url(await browser.get_current_page_url(), from_url):
+            return True
+        await asyncio.sleep(0.1)
+    logger.warning(f"expect_navigation set, but the page stayed on {from_url}")
+    return False
 
 
 async def sleep_for_page_to_load(browser: Browser, sleep_time: float):

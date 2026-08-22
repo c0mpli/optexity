@@ -202,7 +202,8 @@ class NodeVerdict(BaseModel):
 class RunSignals(BaseModel):
     """What the run produced besides the per-node verdicts."""
 
-    llm_tokens: int = 0
+    # None when an agent ran but its usage was never recorded -- not zero.
+    llm_tokens: int | None = 0
     downloaded_files: list[str] = Field(default_factory=list)
     output_data: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -248,7 +249,8 @@ class RoundResult(BaseModel):
     verified: int
     agentic: int
     unresolved: int
-    llm_tokens: int = 0
+    # None when the round drove an agent whose usage was never recorded.
+    llm_tokens: int | None = 0
     seconds: float = 0.0
 
 

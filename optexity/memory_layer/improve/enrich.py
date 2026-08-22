@@ -12,14 +12,6 @@ from optexity.schema.memory_layer import AutomationPatch, Trace, placeholder
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
-DOCS = (
-    Path(__file__).resolve().parents[2]
-    / "docs"
-    / "docs"
-    / "action-types"
-    / "interaction-action.mdx"
-)
-
 
 PROMPT = """You are improving a browser automation compiled from a recording of an AI
 agent completing this objective:
@@ -44,9 +36,6 @@ Guidance:
   the page's own words ("The 'Full Name' text input on the contact form"). For nodes
   that are agentic_task, also give a clearer task string; those are the steps the
   compiler could not pin down, so a precise instruction matters most there.
-
-Reference for what these fields mean:
-{docs}
 
 The compiled automation:
 {automation}
@@ -104,7 +93,12 @@ def apply_patch(automation: Automation, patch: AutomationPatch) -> Automation:
             if isinstance(value, str):
                 for old, new in renames:
                     value = value.replace(old, new)
-                action["input_text"] = inlined.get(value, value)
+                # Substring, like the renames above: a placeholder inside a
+                # longer string would otherwise outlive the parameter that
+                # constant_parameters just removed, and be typed literally.
+                for old, new in inlined.items():
+                    value = value.replace(old, new)
+                action["input_text"] = value
 
     for node_patch in patch.nodes:
         if not 0 <= node_patch.index < len(payload.get("nodes", [])):
@@ -131,11 +125,9 @@ async def enrich(
     if every attempt fails — a compiled automation that works is worth more than
     an enriched one that does not.
     """
-    docs = DOCS.read_text()[:6000] if DOCS.exists() else "(docs unavailable)"
     prompt = PROMPT.format(
         objective=objective or "(not recorded)",
         patch_schema=json.dumps(AutomationPatch.model_json_schema(), indent=2),
-        docs=docs,
         automation=automation.model_dump_json(indent=2, exclude_none=True),
         trace=_trace_digest(trace),
     )

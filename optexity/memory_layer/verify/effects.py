@@ -93,6 +93,11 @@ async def observe_effect(
         return False, f"still on {after_url}", False
 
     if row.action == "input":
+        if getattr(node.interaction_action, "agentic_task", None) is not None:
+            # An agentic node has no command by construction, so its absence is
+            # not evidence the node was inert. Judging it so stopped the pass on
+            # the very rows the loop exists to re-learn.
+            return True, "the agent handled this step", navigated
         action = getattr(node.interaction_action, "input_text", None)
         command = action.command if action else None
         if not command:

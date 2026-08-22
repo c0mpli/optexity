@@ -30,17 +30,19 @@ schemas. Behaviour is grouped by phase:
 |---|---|
 | `capture.py` | saves `agent_history.json` per agentic node; sums both halves of the token bill |
 | `agent_history.py` | reads browser-use's on-disk history into a `Trace` |
+| `run_distill.py` | `optexity distill` — history in, `Automation` out |
+| `run_verification.py` | `optexity verify` — one measured pass, or the loop |
 | `distill/candidates.py` | ranked Playwright locators for a recorded element |
-| `distill/compiler.py` | classifies rows, emits an `Automation` |
+| `distill/classify.py` | decides per row: deterministic, redundant, or still agentic |
+| `distill/compile.py` | turns the kept rows into nodes and parameters |
 | `verify/walk.py` | walks the automation against a live page, verdict per node |
 | `verify/measure.py` | probes a candidate, picks the command to ship |
 | `verify/effects.py` | waits for a navigation or download, reads back what happened |
-| `verify/verdicts.py` | reads and writes verdicts onto the automation |
+| `verify/verdicts.py` | writes what the walk measured back onto the automation |
 | `verify/session.py` | one browser and task per run |
 | `improve/enrich.py` | lets an LLM improve it under pydantic validation, without authoring selectors |
 | `improve/loop.py` | replays, re-learns the agentic steps, recompiles, repeats |
 | `improve/heal.py` | folds a production run's LLM fallbacks back into the automation |
-| `runner.py` | orchestrates a verify pass; `optexity verify` calls it |
 
 ## Run it
 
