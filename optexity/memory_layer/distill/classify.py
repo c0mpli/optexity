@@ -123,10 +123,7 @@ def classify(trace: Trace, automation_url: str | None) -> None:
                     f"< {MINIMUM_STABILITY_SCORE}"
                 )
                 continue
-            matches = "unprobed" if best.is_unprobed else best.match_count
-            row.reason = (
-                f"locator {best.kind} score={best.stability_score} matches={matches}"
-            )
+            row.reason = f"locator {best.kind} score={best.stability_score}"
 
         row.classification = Classification.DETERMINISTIC
         row.reason = row.reason or f"deterministic {row.action}"
