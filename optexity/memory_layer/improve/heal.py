@@ -104,7 +104,7 @@ def recovered_nodes(step_directory: Path, automation: Automation) -> list[Action
     # something would otherwise emit a placeholder nothing substitutes, and the
     # field would receive the literal {name[0]}.
     parameters = automation.parameters.input_parameters
-    for node in compile_nodes(trace, parameters, set(parameters)):
+    for node in compile_nodes(trace, parameters):
         interaction = node.get("interaction_action") or {}
         action = next(
             (interaction[field] for field in LOCATOR_FIELDS if field in interaction),
