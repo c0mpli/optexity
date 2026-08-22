@@ -7,7 +7,8 @@ from copy import deepcopy
 
 from optexity.memory_layer.agent_history import load_trace
 from optexity.memory_layer.capture import AGENT_HISTORY_FILENAME, total_llm_tokens
-from optexity.memory_layer.distill.compiler import classify, trace_to_automation
+from optexity.memory_layer.distill.classify import classify
+from optexity.memory_layer.distill.compile import trace_to_automation
 from optexity.memory_layer.verify.verdicts import apply_verdicts
 from optexity.memory_layer.verify.walk import verify_automation
 from optexity.schema.automation import Automation
