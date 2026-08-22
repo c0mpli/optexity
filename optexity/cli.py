@@ -62,7 +62,13 @@ def run_verify(args: argparse.Namespace) -> None:
     from optexity.memory_layer.run_verification import print_report, run_verification
 
     automation, trace, report, seconds = asyncio.run(
-        run_verification(args.history, args.url, args.headless, args.port)
+        run_verification(
+            args.history,
+            args.url,
+            args.headless,
+            args.port,
+            dict(pair.split("=", 1) for pair in args.parameter),
+        )
     )
     print_report(report, trace, seconds)
     if args.out:
@@ -140,6 +146,14 @@ def main() -> None:
     verify_cmd.add_argument("--url", help="defaults to the recorded url")
     verify_cmd.add_argument("--headless", action="store_true")
     verify_cmd.add_argument("--port", type=int, default=9222)
+    verify_cmd.add_argument(
+        "-p",
+        "--parameter",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="supply a parameter the capture redacted",
+    )
     verify_cmd.set_defaults(func=run_verify)
 
     # ---------------------------
