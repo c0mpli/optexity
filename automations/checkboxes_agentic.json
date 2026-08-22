@@ -1,0 +1,19 @@
+{
+  "url": "https://the-internet.herokuapp.com/checkboxes",
+  "parameters": {
+    "input_parameters": {},
+    "generated_parameters": {}
+  },
+  "nodes": [
+    {
+      "type": "action_node",
+      "interaction_action": {
+        "agentic_task": {
+          "task": "The form has two checkboxes. Tick the first checkbox so it becomes checked, then untick the second checkbox so it becomes unchecked. Click the checkboxes directly. Do not use JavaScript and do not use the evaluate tool. Then stop.",
+          "max_steps": 12,
+          "backend": "browser_use"
+        }
+      }
+    }
+  ]
+}
