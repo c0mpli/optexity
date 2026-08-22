@@ -240,3 +240,20 @@ class AutomationPatch(BaseModel):
     rename_parameters: dict[str, str] = Field(default_factory=dict)
     constant_parameters: list[str] = Field(default_factory=list)
     nodes: list[NodePatch] = Field(default_factory=list)
+
+
+class RoundResult(BaseModel):
+    number: int
+    nodes: int
+    verified: int
+    agentic: int
+    unresolved: int
+    # None when the round drove an agent whose usage was never recorded.
+    llm_tokens: int | None = 0
+    seconds: float = 0.0
+
+
+class LoopResult(BaseModel):
+    rounds: list[RoundResult] = Field(default_factory=list)
+    converged: bool = False
+    stopped_because: str = ""

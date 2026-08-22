@@ -4,12 +4,13 @@ import uuid
 from copy import deepcopy
 from pathlib import Path
 
+from optexity.memory_layer.improve.loop import improve
 from optexity.memory_layer.run_distill import distill
 from optexity.memory_layer.verify.session import make_build_session, missing_parameters
 from optexity.memory_layer.verify.verdicts import apply_verdicts
 from optexity.memory_layer.verify.walk import verify_automation
 from optexity.schema.automation import Automation
-from optexity.schema.memory_layer import Trace, VerificationReport
+from optexity.schema.memory_layer import LoopResult, Trace, VerificationReport
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,21 @@ async def run_verification(
     return automation, trace, report, seconds
 
 
-def print_report(report, trace, seconds: float) -> None:
+async def run_improvement(
+    history_path: Path,
+    url: str | None,
+    headless: bool,
+    port: int,
+    rounds: int,
+    supplied: dict[str, str] | None = None,
+) -> tuple[Automation, Trace, LoopResult]:
+    automation, trace = compile_for_run(history_path, url, supplied)
+    return await improve(
+        trace, automation, make_build_session(headless, port), max_rounds=rounds
+    )
+
+
+def print_report(report: VerificationReport, trace: Trace, seconds: float) -> None:
     print(f"\n{report.url}")
     print(f"  verified {report.verified_count}/{len(report.verdicts)} nodes")
     if report.stopped_at is not None:

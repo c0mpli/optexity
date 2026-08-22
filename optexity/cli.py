@@ -59,21 +59,31 @@ def run_distill(args: argparse.Namespace) -> None:
 def run_verify(args: argparse.Namespace) -> None:
     import asyncio
 
-    from optexity.memory_layer.run_verification import print_report, run_verification
-
-    automation, trace, report, seconds = asyncio.run(
-        run_verification(
-            args.history,
-            args.url,
-            args.headless,
-            args.port,
-            dict(pair.split("=", 1) for pair in args.parameter),
-        )
+    from optexity.memory_layer.improve.loop import format_table
+    from optexity.memory_layer.run_verification import (
+        print_report,
+        run_improvement,
+        run_verification,
     )
-    print_report(report, trace, seconds)
+
+    supplied = dict(pair.split("=", 1) for pair in args.parameter)
+    if args.rounds > 1:
+        automation, trace, loop_result = asyncio.run(
+            run_improvement(
+                args.history, args.url, args.headless, args.port, args.rounds, supplied
+            )
+        )
+        print(format_table(loop_result, trace))
+        succeeded = loop_result.converged
+    else:
+        automation, trace, report, seconds = asyncio.run(
+            run_verification(args.history, args.url, args.headless, args.port, supplied)
+        )
+        print_report(report, trace, seconds)
+        succeeded = report.complete
     if args.out:
         args.out.write_text(automation.model_dump_json(indent=2, exclude_none=True))
-    if not report.complete:
+    if not succeeded:
         sys.exit(1)
 
 
@@ -153,6 +163,12 @@ def main() -> None:
         default=[],
         metavar="NAME=VALUE",
         help="supply a parameter the capture redacted",
+    )
+    verify_cmd.add_argument(
+        "--rounds",
+        type=int,
+        default=1,
+        help="replay this many times, learning from the agentic steps each round",
     )
     verify_cmd.set_defaults(func=run_verify)
 
