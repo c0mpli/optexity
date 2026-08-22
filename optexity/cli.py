@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 from uvicorn import run
@@ -45,6 +46,16 @@ def run_inference(args: argparse.Namespace) -> None:
     )
 
 
+def run_distill(args: argparse.Namespace) -> None:
+    from optexity.memory_layer.run_distill import distill, print_summary
+
+    automation, trace = distill(args.history, args.url)
+    args.out.write_text(automation.model_dump_json(indent=2, exclude_none=True))
+    if args.trace_out:
+        args.trace_out.write_text(trace.model_dump_json(indent=2))
+    print_summary(trace, automation, args.history, args.out)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="optexity")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -75,6 +86,18 @@ def main() -> None:
     )
 
     inference_cmd.set_defaults(func=run_inference)
+
+    # ---------------------------
+    # distill
+    # ---------------------------
+    distill_cmd = subparsers.add_parser(
+        "distill", help="Compile a captured agentic run into an Automation"
+    )
+    distill_cmd.add_argument("history", type=Path, help="path to agent_history.json")
+    distill_cmd.add_argument("-o", "--out", type=Path, required=True)
+    distill_cmd.add_argument("--url", help="defaults to the recorded url")
+    distill_cmd.add_argument("--trace-out", type=Path, help="also write the trace")
+    distill_cmd.set_defaults(func=run_distill)
 
     args = parser.parse_args()
     args.func(args)
